@@ -17,13 +17,13 @@ pub struct InvitePayload {
 
 /// Encode an `InvitePayload` into a single base58 token.
 ///
-/// Serialises to JSON, dot-joins the three fields (address.nonce_hex.ts),
+/// Serialises the three fields with colons as delimiters (address:nonce_hex:ts),
 /// then base58-encodes the result into one contiguous string.
 pub fn encode(payload: &InvitePayload) -> Result<String> {
     validate_address(&payload.onion_address)?;
     let nonce_hex = hex::encode(payload.nonce);
     let joined = format!(
-        "{}.{}.{}",
+        "{}:{}:{}",
         payload.onion_address, nonce_hex, payload.timestamp
     );
     Ok(joined.as_bytes().to_base58())
@@ -46,10 +46,10 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
     let decoded =
         String::from_utf8(bytes).map_err(|_| ChatError::InvalidInvite("not valid UTF-8".into()))?;
 
-    let parts: Vec<&str> = decoded.splitn(3, '.').collect();
+    let parts: Vec<&str> = decoded.splitn(3, ':').collect();
     if parts.len() != 3 {
         return Err(ChatError::InvalidInvite(
-            "expected three dot-separated fields".into(),
+            "expected three colon-separated fields".into(),
         ));
     }
 
