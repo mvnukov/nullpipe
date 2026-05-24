@@ -1,0 +1,16 @@
+[package]
+name = "ephemeral-chat"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "chat"
+path = "src/main.rs"
+
+[dependencies]
+ephemeral-chat-core = { path = "../core" }
+tokio = { version = "1", features = ["full"] }
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
