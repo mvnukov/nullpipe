@@ -19,7 +19,11 @@ pub struct PeerInfo {
 #[derive(Debug)]
 pub enum ChatEvent {
     /// A chat message from a peer.
-    Message { from: PeerId, name: String, text: String },
+    Message {
+        from: PeerId,
+        name: String,
+        text: String,
+    },
     /// A peer joined the room.
     PeerJoin(PeerInfo),
     /// A peer left the room.

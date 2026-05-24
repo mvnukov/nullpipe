@@ -1,3 +1,4 @@
+use base58::{FromBase58, ToBase58};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,7 @@ pub fn encode(payload: &InvitePayload) -> Result<String> {
         "{}.{}.{}",
         payload.onion_address, nonce_hex, payload.timestamp
     );
-    Ok(base58::encode(joined.as_bytes()))
+    Ok(joined.as_bytes().to_base58())
 }
 
 /// Decode a base58 token back into an `InvitePayload`.
@@ -38,13 +39,12 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
         return Err(ChatError::InvalidInvite("empty token".into()));
     }
 
-    let bytes = base58::decode(token).map_err(|e| {
-        ChatError::InvalidInvite(format!("bad base58: {e}"))
-    })?;
+    let bytes = token
+        .from_base58()
+        .map_err(|e| ChatError::InvalidInvite(format!("bad base58: {e:?}")))?;
 
-    let decoded = String::from_utf8(bytes).map_err(|_| {
-        ChatError::InvalidInvite("not valid UTF-8".into())
-    })?;
+    let decoded =
+        String::from_utf8(bytes).map_err(|_| ChatError::InvalidInvite("not valid UTF-8".into()))?;
 
     let parts: Vec<&str> = decoded.splitn(3, '.').collect();
     if parts.len() != 3 {
@@ -56,9 +56,8 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
     let onion_address = parts[0].to_string();
     validate_address(&onion_address)?;
 
-    let nonce_bytes = hex::decode(parts[1]).map_err(|_| {
-        ChatError::InvalidInvite("nonce is not valid hex".into())
-    })?;
+    let nonce_bytes = hex::decode(parts[1])
+        .map_err(|_| ChatError::InvalidInvite("nonce is not valid hex".into()))?;
     if nonce_bytes.len() != 16 {
         return Err(ChatError::InvalidInvite(format!(
             "nonce must be 16 bytes, got {}",
@@ -68,9 +67,9 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
     let mut nonce = [0u8; 16];
     nonce.copy_from_slice(&nonce_bytes);
 
-    let timestamp: u64 = parts[2].parse().map_err(|_| {
-        ChatError::InvalidInvite("timestamp is not a valid u64".into())
-    })?;
+    let timestamp: u64 = parts[2]
+        .parse()
+        .map_err(|_| ChatError::InvalidInvite("timestamp is not a valid u64".into()))?;
 
     // Clock skew tolerance: 300 s into the future.
     let now = Utc::now().timestamp() as u64;
@@ -207,14 +206,20 @@ mod tests {
     #[test]
     fn decode_invalid_base58() {
         // Contains chars not in base58 alphabet (0, O, I, l)
-        assert!(matches!(decode("0OIl", None), Err(ChatError::InvalidInvite(_))));
+        assert!(matches!(
+            decode("0OIl", None),
+            Err(ChatError::InvalidInvite(_))
+        ));
     }
 
     #[test]
     fn decode_garbage_too_short() {
         let tiny = encode(&make_payload(ONION, 1)).unwrap();
         // Manually truncate to make it invalid
-        assert!(matches!(decode(&tiny[..2], None), Err(ChatError::InvalidInvite(_))));
+        assert!(matches!(
+            decode(&tiny[..2], None),
+            Err(ChatError::InvalidInvite(_))
+        ));
     }
 
     #[test]
@@ -279,7 +284,10 @@ mod tests {
         let far_future = (Utc::now().timestamp() + 600) as u64; // +10 min, skew is 300s
         let payload = make_payload(ONION, far_future);
         let token = encode(&payload).unwrap();
-        assert!(matches!(decode(&token, None), Err(ChatError::InvalidInvite(_))));
+        assert!(matches!(
+            decode(&token, None),
+            Err(ChatError::InvalidInvite(_))
+        ));
     }
 
     #[test]
