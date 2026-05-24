@@ -9,8 +9,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base58 = "0.2"
 rand = "0.8"
+arti-client = { version = "0.42", features = ["onion-service-client", "onion-service-service", "experimental-api"] }
+tor-rtcompat = "0.42"
+tor-hscrypto = "0.42"
+tor-hsservice = "0.42"
+safelog = "0.8"
 thiserror = "2"
 sha2 = "0.10"
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
+futures = "0.3"
+async-stream = "0.3"

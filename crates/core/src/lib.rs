@@ -1,7 +1,13 @@
+pub mod bootstrap;
 pub mod error;
+pub mod hub;
 pub mod invite;
+pub mod joiner;
 pub mod types;
 
+pub use bootstrap::TorBootstrap;
 pub use error::{ChatError, Result};
+pub use hub::HostedRoom;
 pub use invite::{decode as decode_invite, encode as encode_invite, InvitePayload};
+pub use joiner::Joiner;
 pub use types::*;
