@@ -79,11 +79,11 @@
 - [x] Graceful shutdown on `/quit` or Ctrl-C: cleanup, restore terminal, exit
 
 ## Phase 8: Integration and polish
-- [ ] Manual test: hub + 2 joiners on same machine
-- [ ] Manual test: hub + joiner across machines (verify Tor routing)
-- [ ] Error scenarios: expired invite, used nonce, bootstrap failure, hub crash
-- [ ] `--timestamps` flag wired through
-- [ ] Edge cases: rapid connect/disconnect, large messages, unicode
+- [x] Manual test: hub + 2 joiners on same machine
+- [x] Manual test: hub + joiner across machines (verify Tor routing)
+- [x] Error scenarios: expired invite, used nonce, bootstrap failure, hub crash
+- [x] `--timestamps` flag wired through
+- [x] Edge cases: rapid connect/disconnect, large messages, unicode
 
 ## Phase 9: Defer (out of v1 scope)
 - [ ] Persistent consensus cache across restarts
