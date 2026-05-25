@@ -791,3 +791,98 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ephemeral_chat_core::HostConfig;
+
+    async fn make_app() -> (App, RoomHandle, mpsc::UnboundedReceiver<CmdResult>) {
+        let mut app = App::new("tester".into(), false);
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
+        app.set_cmd_tx(cmd_tx);
+        let (handle, mut ev_rx) = ephemeral_chat_core::host(HostConfig {
+            name: "tester".into(),
+            invite_ttl_secs: 300,
+        });
+        // Feed RoomReady into App so mode becomes Running
+        while let Some(ev) = ev_rx.recv().await {
+            app.handle_event(ev.clone());
+            if matches!(ev, ephemeral_chat_core::ChatEvent::RoomReady { .. }) {
+                break;
+            }
+        }
+        app.handle = Some(handle.clone());
+        (app, handle, cmd_rx)
+    }
+
+    #[tokio::test]
+    async fn typing_and_sending_does_not_quit() {
+        let (mut app, handle, mut cmd_rx) = make_app().await;
+        assert!(!app.quit);
+
+        // Simulate typing "hello"
+        for c in "hello".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.input, "hello");
+        assert!(!app.quit, "typing must not quit");
+
+        // Simulate Enter → send
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.input.is_empty(), "input should be consumed");
+        assert!(!app.quit, "sending must not quit");
+
+        // Give spawned task time to execute
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Drain any cmd results
+        while cmd_rx.try_recv().is_ok() {}
+
+        assert!(!app.quit, "after send task completes, must still be alive");
+
+        // THIS IS THE BUG: second send fails because host_task exited
+        let r = handle.send("still alive").await;
+        assert!(r.is_ok(), "second send FAILED — host_task exited after first send with no peers. Result: {:?}", r);
+
+        handle.quit().await;
+    }
+
+    #[tokio::test]
+    async fn typing_individual_chars_does_not_quit() {
+        let (mut app, handle, _) = make_app().await;
+        assert!(!app.quit);
+
+        let chars = vec![
+            ('a', KeyModifiers::NONE),
+            ('b', KeyModifiers::NONE),
+            (' ', KeyModifiers::NONE),
+            ('Z', KeyModifiers::SHIFT),
+            ('1', KeyModifiers::NONE),
+        ];
+        for (c, modif) in chars {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), modif));
+            assert!(!app.quit, "char '{}' with {:?} must not quit", c, modif);
+        }
+        assert_eq!(app.input, "ab Z1");
+
+        handle.quit().await;
+    }
+
+    #[test]
+    fn ctrl_c_sets_quit() {
+        // Can't use make_app() here — it's async and needs tokio.
+        // Just test the handle_key logic directly.
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
+        let mut app = App::new("tester".into(), false);
+        app.set_cmd_tx(cmd_tx);
+        assert!(!app.quit);
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.quit);
+    }
+}

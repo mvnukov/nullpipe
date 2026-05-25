@@ -271,18 +271,58 @@ fn cli_version_flag() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 10: SIGINT handling (Ctrl-C)
+// Test 11: Host stays alive after sending a message (no peers)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cli_sigint_handling() {
+fn cli_host_send_message_no_peers_stays_alive() {
+    // Spawn host, wait for bootstrap, send a message via stdin,
+    // verify process doesn't exit/crash.
     let mut child = spawn_chat(&["host"]);
-    std::thread::sleep(std::time::Duration::from_secs(2));
 
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGINT);
+    // Wait for Tor bootstrap (~15-30s first run, faster on cache)
+    std::thread::sleep(std::time::Duration::from_secs(20));
+
+    // Check process is still running
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            // Process exited — grab stderr to see why
+            let stderr = child.stderr.take().map(|mut s| {
+                let mut buf = String::new();
+                let _ = std::io::Read::read_to_string(&mut s, &mut buf);
+                buf
+            }).unwrap_or_default();
+            panic!("CLI exited prematurely with status {:?}\nstderr: {}", status, stderr);
+        }
+        Ok(None) => {} // Still running — good
+        Err(e) => panic!("try_wait failed: {}", e),
     }
 
-    let status = child.wait();
-    assert!(status.is_ok(), "process should exit after SIGINT");
+    // Send a newline via stdin (simulates pressing Enter with empty input,
+    // which should be a no-op but exercises the input path)
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(b"hello\n");
+        let _ = stdin.flush();
+    }
+
+    // Give it time to process the input
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    // Verify still running
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let stderr = child.stderr.take().map(|mut s| {
+                let mut buf = String::new();
+                let _ = std::io::Read::read_to_string(&mut s, &mut buf);
+                buf
+            }).unwrap_or_default();
+            panic!("CLI exited after sending message with status {:?}\nstderr: {}", status, stderr);
+        }
+        Ok(None) => {} // Still running — test passes
+        Err(e) => panic!("try_wait failed: {}", e),
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
 }

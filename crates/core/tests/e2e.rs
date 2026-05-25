@@ -387,6 +387,36 @@ fn e2e_double_join_nonce_reuse_detectable() {
 }
 
 // ---------------------------------------------------------------------------
+// Host sends message with no peers — room must stay open
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_host_send_message_no_peers_room_stays_open() {
+    let (host_h, mut host_ev) = host(HostConfig {
+        name: "host".into(),
+        invite_ttl_secs: 300,
+    });
+    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
+        .await
+        .expect("host RoomReady");
+
+    // No peers connected — host sends a message
+    host_h.send("hello with nobody here").await.unwrap();
+
+    // Room must NOT close. Give it a moment to see if it self-destructs.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // If the room closed, event stream would return None immediately.
+    // Verify handle is still usable:
+    let peers = host_h.peers().await;
+    assert!(peers.is_empty(), "should have zero peers");
+    let code = host_h.invite().await.expect("invite should still work");
+    assert!(!code.is_empty(), "should still generate invite");
+
+    host_h.quit().await;
+}
+
+// ---------------------------------------------------------------------------
 // CLI bug demonstration: invite/peers/quit work in async context
 // ---------------------------------------------------------------------------
 // Before the fix in bug-block-on-runtime.md, the CLI called these via
