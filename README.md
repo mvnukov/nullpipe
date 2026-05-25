@@ -21,7 +21,6 @@ One person **hosts** a room, which creates a Tor onion service. The host generat
 ## Requirements
 
 - **Rust** 1.75+ (edition 2021)
-- **Tor** installed on your system (for the `tor` binary, used by arti-client)
 
 ## Build
 
