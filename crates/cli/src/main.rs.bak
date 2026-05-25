@@ -31,16 +31,6 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 const TICK_MS: u64 = 100;
 
 // ---------------------------------------------------------------------------
-// Async command results (sent from spawned tasks back to main loop)
-// ---------------------------------------------------------------------------
-
-enum CmdResult {
-    Invite { code: Result<String, String> },
-    Peers { peers: Vec<PeerInfo> },
-    Quit,
-}
-
-// ---------------------------------------------------------------------------
 // Display message
 // ---------------------------------------------------------------------------
 
@@ -76,7 +66,6 @@ struct App {
     quit: bool,
     bootstrap_start: Instant,
     input_focused: bool,
-    cmd_tx: Option<mpsc::UnboundedSender<CmdResult>>,
 }
 
 impl App {
@@ -97,12 +86,7 @@ impl App {
             quit: false,
             bootstrap_start: Instant::now(),
             input_focused: true,
-            cmd_tx: None,
         }
-    }
-
-    fn set_cmd_tx(&mut self, tx: mpsc::UnboundedSender<CmdResult>) {
-        self.cmd_tx = Some(tx);
     }
 
     fn push(&mut self, name: String, text: String, system: bool) {
@@ -246,7 +230,7 @@ impl App {
         }
 
         if let Some(cmd) = text.strip_prefix('/') {
-            self.dispatch_command(cmd);
+            self.command(cmd);
             return;
         }
 
@@ -259,7 +243,7 @@ impl App {
         }
     }
 
-    fn dispatch_command(&mut self, cmd: &str) {
+    fn command(&mut self, cmd: &str) {
         let h = match &self.handle {
             Some(h) => h.clone(),
             None => {
@@ -268,32 +252,36 @@ impl App {
             }
         };
 
-        let tx = match &self.cmd_tx {
-            Some(tx) => tx.clone(),
-            None => {
-                self.push("system".into(), "command channel not ready".into(), true);
-                return;
-            }
-        };
-
         match cmd {
             "invite" => {
-                tokio::spawn(async move {
-                    let code = h.invite().await.map_err(|e| e.to_string());
-                    let _ = tx.send(CmdResult::Invite { code });
-                });
+                let rt = tokio::runtime::Handle::current();
+                match rt.block_on(h.invite()) {
+                    Ok(code) => {
+                        self.push("system".into(), format!("invite code: {}", code), true);
+                    }
+                    Err(e) => {
+                        self.push("system".into(), format!("invite failed: {}", e), true);
+                    }
+                }
             }
             "peers" => {
-                tokio::spawn(async move {
-                    let peers = h.peers().await;
-                    let _ = tx.send(CmdResult::Peers { peers });
-                });
+                let rt = tokio::runtime::Handle::current();
+                let ps = rt.block_on(h.peers());
+                if ps.is_empty() {
+                    self.push("system".into(), "no peers connected".into(), true);
+                } else {
+                    let names: Vec<_> = ps.iter().map(|p| p.name.as_str()).collect();
+                    self.push(
+                        "system".into(),
+                        format!("peers: {}", names.join(", ")),
+                        true,
+                    );
+                }
             }
             "quit" => {
-                tokio::spawn(async move {
-                    h.quit().await;
-                    let _ = tx.send(CmdResult::Quit);
-                });
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(h.quit());
+                self.quit = true;
             }
             _ => {
                 self.push("system".into(), format!("unknown command: /{}", cmd), true);
@@ -691,10 +679,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Command result channel (for async /invite, /peers, /quit)
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
-    app.set_cmd_tx(cmd_tx);
-
     // Tick timer for spinner animation during bootstrap
     let mut ticker = tokio::time::interval(Duration::from_millis(TICK_MS));
 
@@ -719,29 +703,6 @@ async fn main() -> Result<()> {
                             app.push("system".into(), "connection lost".into(), true);
                             app.mode = Mode::ShuttingDown { since: Instant::now() };
                         }
-                    }
-                }
-            }
-
-            // Command results (async /invite, /peers, /quit)
-            Some(result) = cmd_rx.recv() => {
-                match result {
-                    CmdResult::Invite { code } => {
-                        match code {
-                            Ok(c) => app.push("system".into(), format!("invite code: {}", c), true),
-                            Err(e) => app.push("system".into(), format!("invite failed: {}", e), true),
-                        }
-                    }
-                    CmdResult::Peers { peers } => {
-                        if peers.is_empty() {
-                            app.push("system".into(), "no peers connected".into(), true);
-                        } else {
-                            let names: Vec<_> = peers.iter().map(|p| p.name.as_str()).collect();
-                            app.push("system".into(), format!("peers: {}", names.join(", ")), true);
-                        }
-                    }
-                    CmdResult::Quit => {
-                        app.quit = true;
                     }
                 }
             }

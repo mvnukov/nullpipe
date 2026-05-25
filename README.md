@@ -93,7 +93,7 @@ crates/
 └── cli/    ─── Binary: TUI application using ratatui + crossterm
 ```
 
-- **Tor**: Uses [`arti-client`](https://crates.io/crates/arti-client) (Rust-native Tor implementation)
+- **Tor**: Uses [`arti-client`](https://crates.io/crates/arti-client) — a **pure-Rust Tor implementation**. The library bundles Tor in-process. No external `tor` binary, `torrc`, or daemon is needed. Just compile and run.
 - **Onion services**: v3 ephemeral onion services, one per hosted room
 - **Wire protocol**: Length-prefixed JSON messages over Tor data streams
 - **Handshake**: 32-byte nonce + discriminator exchange for peer identification

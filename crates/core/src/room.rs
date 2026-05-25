@@ -532,6 +532,10 @@ async fn hub_handshake(
         .await
         .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
         .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+    timeout(WRITE_TIMEOUT, stream.flush())
+        .await
+        .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
 
     let name = format!("peer-{}", hex::encode(&discriminator[..4]));
     Ok((peer_id, name))
@@ -665,7 +669,7 @@ async fn joiner_task(
 
     // 3. Connect to hub
     let stream = match timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(90),
         client.connect((payload.onion_address.as_str(), 80)),
     )
     .await
@@ -787,6 +791,10 @@ async fn joiner_handshake(mut stream: DataStream) -> Result<(DataStream, PeerId,
         .await
         .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
         .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+    timeout(WRITE_TIMEOUT, stream.flush())
+        .await
+        .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
 
     let mut response = [0u8; 1];
     timeout(READ_TIMEOUT, stream.read_exact(&mut response))
@@ -871,6 +879,8 @@ async fn bootstrap_tor(
         }
     };
 
+    let mut bootstrap_ok = false;
+
     loop {
         tokio::select! {
             biased;
@@ -884,6 +894,9 @@ async fn bootstrap_tor(
             event = event_stream.next() => {
                 match event {
                     Some(e) => {
+                        if matches!(&e, ChatEvent::BootstrapProgress(100)) {
+                            bootstrap_ok = true;
+                        }
                         if event_tx.send(e).await.is_err() {
                             bootstrap.shutdown();
                             return None;
@@ -895,7 +908,12 @@ async fn bootstrap_tor(
         }
     }
 
-    Some(bootstrap)
+    if bootstrap_ok {
+        Some(bootstrap)
+    } else {
+        bootstrap.shutdown();
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

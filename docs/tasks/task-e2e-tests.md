@@ -1,7 +1,7 @@
 # Task: Create proper e2e tests
 
 **Priority:** High  
-**Status:** Not started
+**Status:** ✅ Complete
 
 ## ⚠️ CRITICAL: TOR NETWORK IS AVAILABLE. RUN ALL E2E TESTS.
 
