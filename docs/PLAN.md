@@ -68,15 +68,15 @@
 - [x] Name persistence: read/write `~/.config/ephemeral-chat/name`, prompt if missing
 
 ## Phase 7: Binary — TUI
-- [ ] Terminal setup: `crossterm` backend, enter raw mode, alternate screen
-- [ ] Layout: top bar | message area | status bar | input bar
-- [ ] Top bar: app name + truncated room ID (first 12 chars)
-- [ ] Message area: scrollable list, `[name] message` format, auto-scroll to bottom
-- [ ] Status bar: connected peer names
-- [ ] Input bar: single-line text input with `>` prompt
-- [ ] `/invite`, `/peers`, `/quit` slash commands
-- [ ] Bootstrap progress rendering (spinner + percentage)
-- [ ] Graceful shutdown on `/quit` or Ctrl-C: cleanup, restore terminal, exit
+- [x] Terminal setup: `crossterm` backend, enter raw mode, alternate screen
+- [x] Layout: top bar | message area | status bar | input bar
+- [x] Top bar: app name + truncated room ID (first 12 chars)
+- [x] Message area: scrollable list, `[name] message` format, auto-scroll to bottom
+- [x] Status bar: connected peer names
+- [x] Input bar: single-line text input with `>` prompt
+- [x] `/invite`, `/peers`, `/quit` slash commands
+- [x] Bootstrap progress rendering (spinner + percentage)
+- [x] Graceful shutdown on `/quit` or Ctrl-C: cleanup, restore terminal, exit
 
 ## Phase 8: Integration and polish
 - [ ] Manual test: hub + 2 joiners on same machine

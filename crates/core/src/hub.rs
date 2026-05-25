@@ -463,8 +463,12 @@ impl Hub {
             return Err(ChatError::InvalidInvite("handshake wrong length".into()));
         }
 
-        let nonce: [u8; 16] = buf[..16].try_into().unwrap();
-        let discriminator: [u8; 16] = buf[16..32].try_into().unwrap();
+        let nonce: [u8; 16] = buf[..16]
+            .try_into()
+            .expect("handshake buffer is HANDSHAKE_LEN");
+        let discriminator: [u8; 16] = buf[16..32]
+            .try_into()
+            .expect("handshake buffer is HANDSHAKE_LEN");
 
         // Single-use nonce check
         {

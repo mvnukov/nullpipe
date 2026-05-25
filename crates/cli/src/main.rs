@@ -25,6 +25,7 @@ const DEFAULT_INVITE_TTL: u64 = 300;
 const CONFIG_DIR_NAME: &str = "ephemeral-chat";
 const NAME_FILE: &str = "name";
 const APP_NAME: &str = "ephemeral-chat";
+const MAX_DISPLAY_NAME: usize = 20;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const TICK_MS: u64 = 100;
@@ -296,6 +297,17 @@ impl App {
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // Graceful degradation: need at least 4 rows for the layout
+    if area.width < 10 || area.height < 4 {
+        let msg = format!(
+            "Terminal too small: {}x{} (need at least 10x4)",
+            area.width, area.height
+        );
+        let p = Paragraph::new(msg).style(Style::default().fg(Color::Yellow));
+        frame.render_widget(p, area);
+        return;
+    }
+
     // Layout: top bar (1) | messages (flex) | status (1) | input (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -380,8 +392,13 @@ fn render_messages(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                         .add_modifier(Modifier::DIM),
                 )
             } else {
+                let truncated = if m.name.len() > MAX_DISPLAY_NAME {
+                    format!("{}...", &m.name[..MAX_DISPLAY_NAME.saturating_sub(3)])
+                } else {
+                    m.name.clone()
+                };
                 Span::styled(
-                    format!("[{}] ", m.name),
+                    format!("[{}] ", truncated),
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),

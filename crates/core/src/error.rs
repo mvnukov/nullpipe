@@ -1,5 +1,9 @@
 use thiserror::Error;
 
+/// Errors that can occur during chat operations.
+///
+/// Covers invite validation, connection failures, wire protocol errors,
+/// and lifecycle events like shutdown.
 #[derive(Error, Debug)]
 pub enum ChatError {
     #[error("invite code invalid: {0}")]
@@ -59,4 +63,5 @@ impl Clone for ChatError {
     }
 }
 
+/// Convenience alias for `Result<T, ChatError>`.
 pub type Result<T> = std::result::Result<T, ChatError>;

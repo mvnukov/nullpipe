@@ -206,7 +206,7 @@ async fn host_task(
     let client = {
         let client_opt = tor
             .lock()
-            .unwrap()
+            .expect("tor lock poisoned")
             .as_ref()
             .and_then(|b| b.client().ok())
             .cloned();
@@ -242,7 +242,7 @@ async fn host_task(
         .await;
 
     {
-        let mut guard = invite_info.lock().unwrap();
+        let mut guard = invite_info.lock().expect("invite lock poisoned");
         *guard = Some(InviteInfo {
             onion_address,
             port,
@@ -511,8 +511,12 @@ async fn hub_handshake(
         return Err(ChatError::InvalidInvite("handshake wrong length".into()));
     }
 
-    let nonce: [u8; 16] = buf[..16].try_into().unwrap();
-    let discriminator: [u8; 16] = buf[16..32].try_into().unwrap();
+    let nonce: [u8; 16] = buf[..16]
+        .try_into()
+        .expect("handshake buffer is HANDSHAKE_LEN");
+    let discriminator: [u8; 16] = buf[16..32]
+        .try_into()
+        .expect("handshake buffer is HANDSHAKE_LEN");
 
     {
         let mut set = nonces.lock().await;
@@ -631,7 +635,7 @@ async fn joiner_task(
     let client = {
         let client_opt = tor
             .lock()
-            .unwrap()
+            .expect("tor lock poisoned")
             .as_ref()
             .and_then(|b| b.client().ok())
             .cloned();
