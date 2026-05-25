@@ -126,7 +126,12 @@ impl RoomHandle {
 
 impl Drop for RoomHandle {
     fn drop(&mut self) {
-        do_quit(&self.inner);
+        // Only shut down when the last handle is dropped.
+        // Without this check, a temporary clone (e.g. from a spawned send
+        // task) would prematurely kill the room.
+        if Arc::strong_count(&self.inner) == 1 {
+            do_quit(&self.inner);
+        }
     }
 }
 
