@@ -82,7 +82,7 @@ Wire `arti-client` for Tor bootstrap, onion service (hub), and onion connection 
 - [x] `shutdown()` closes the stream cleanly
 - [x] Double `shutdown()` is a no-op
 
-### Integration (local, no Tor network required)
+### Integration (Tor is available — real network tests)
 - [x] Bootstrap + host + join on loopback: hub starts, joiner connects
 - [x] Data written by joiner is readable by hub (and vice versa)
 - [x] Hub shutdown → joiner sees stream close

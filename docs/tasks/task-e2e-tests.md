@@ -3,6 +3,10 @@
 **Priority:** High  
 **Status:** Not started
 
+## ⚠️ CRITICAL: TOR NETWORK IS AVAILABLE. RUN ALL E2E TESTS.
+
+The Tor network IS available in this environment. Arti bootstraps against real Tor directory authorities. ALL e2e and integration tests MUST be executed. DO NOT skip, ignore, or mock any test. DO NOT add `#[ignore]`. DO NOT claim "Tor unavailable".
+
 ## Problem
 
 The app has no end-to-end tests. Manual testing revealed it "doesn't work at all" — at minimum the `/invite` crash (see `bug-block-on-runtime.md`), but likely more issues in the host↔join flow, invite code exchange, message passing, and peer join/leave.
@@ -20,15 +24,33 @@ Automated e2e tests that verify the full user flow:
 
 ## Approach
 
-- Use `tokio::test` with a real or mocked Tor backend
-- Spawn host and joiner in separate tasks/threads
+**Do NOT mock Tor.** The app uses Arti (`arti-client`) — a pure-Rust Tor implementation built in. There is no external `tor` binary, no `torrc`, no SOCKS proxy. All tests use the real `TorBootstrap` → `arti_client` flow.
+
+### Why the existing `#[ignore]` test existed (NOW REMOVED)
+
+The `e2e_joiner_connects_to_host_and_transfers_data` test was previously marked `#[ignore]`. **This has been removed.** All tests now run. Tor IS available. Execute everything.
+
+### Bootstrap timing
+
+Arti bootstrap takes ~30-90s on first run (downloads consensus, builds circuits). This is normal. Do not "optimize" it away with mocks.
+
+### Test structure
+
+- Use `tokio::test` with real `TorBootstrap::bootstrap()` (Arti)
+- Spawn host and joiner in separate tasks
 - Wire their `ChatEvent` channels to assertions
-- Consider a "mock Tor" or localhost-only mode for CI (real Tor bootstrap is slow)
-- Cover edge cases: invalid invite code, expired TTL, double-join with same code
+- Tests need normal internet access (Arti contacts Tor directory authorities on port 9001/9030)
+- No external software, binaries, or configuration required
+
+### Edge cases
+
+- Invalid invite code
+- Expired TTL
+- Double-join with same nonce (`NonceReused`)
 
 ## Acceptance Criteria
 
 - `cargo test --workspace` includes e2e tests that pass locally
-- Tests run in CI (with or without real Tor)
+- `cargo test --workspace` runs ALL e2e and integration tests on real Tor — they pass
 - All six flows above covered
 - Tests must be written so they **demonstrate the bug from `bug-block-on-runtime.md`** — i.e., they should call `/invite`, `/peers`, `/quit` and fail with the `block_on` panic before the fix, then pass after

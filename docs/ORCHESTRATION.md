@@ -9,6 +9,7 @@ Work through remaining phases sequentially. Each phase gets two Pi instances: im
 - **Kill previous instance BEFORE spawning a new one** — avoids duplicate session names and confusion
 - **Target sessions by PID** — Pi sessions reuse names (e.g. "nullpipe"), PID is unique
 - **Keep prompts minimal** — task files have all details. Just say `Implement docs/tasks/phaseX.md. Reply when done.` or `Verify docs/tasks/phaseX.md. Reply when done.`
+- **Tor network IS available.** All e2e tests MUST run. See `docs/TOR_POLICY.md`. NEVER skip or ignore tests.
 - **Check every 5 minutes** — if no reply within 5 min, send a status check. If still no reply, check tmux pane output.
 - **Fallback if agent forgets to reply:**
   1. `send_to_session` — "done yet?"

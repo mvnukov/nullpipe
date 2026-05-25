@@ -99,7 +99,7 @@ Implement the hub-side accept loop, per-connection handshake, reader/writer task
 - [x] `e2e_bootstrap_emits_progress_0_to_100` — passes
 - [x] `e2e_shutdown_idempotent` — passes
 - [x] `e2e_drop_triggers_cleanup` — passes
-- [ ] `e2e_joiner_connects_to_host_and_transfers_data` — **ignored** (Tor rendezvous unreliable in single-client test)
+- [x] `e2e_joiner_connects_to_host_and_transfers_data` — **was ignored, now runs** (ignore removed, Tor is available)
 - [ ] Hub + 2 joiners: all three can exchange messages — **no test**
 - [ ] Expired invite → handshake fails — **no test**
 - [ ] Nonce replay → second joiner rejected — **unit test only**
@@ -132,5 +132,5 @@ Implement the hub-side accept loop, per-connection handshake, reader/writer task
 
 - Handshake uses a simplified 32-byte wire format rather than length-prefixed `{nonce, name}` struct
 - `HostedRoom` (Phase 2) handles raw Tor accept; `Hub` (Phase 3) adds protocol layer
-- E2E joiner test marked `#[ignore]` — Tor rendezvous circuit between same client's host/joiner is unreliable
+- E2E joiner test **now runs** — `#[ignore]` removed, Tor is available
 - Nonce bookkeeping lacks TTL-based cleanup; set grows unbounded over long-running sessions

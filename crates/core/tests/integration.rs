@@ -1,8 +1,9 @@
 //! Integration tests for the full chat lifecycle:
 //! bootstrap → host → join → data transfer → shutdown.
 //!
-//! These tests require a working Tor network connection.
-//! These tests require a working Tor network connection.
+//! These tests use Arti (pure-Rust Tor, bundled as a dependency).
+//! No external `tor` binary is needed. Tests require normal internet access
+//! so Arti can contact Tor directory authorities and bootstrap.
 
 use std::time::Duration;
 
@@ -43,7 +44,8 @@ async fn bootstrap_tor() -> (TorBootstrap, Vec<ChatEvent>) {
 }
 
 // ---------------------------------------------------------------------------
-// E2E tests (require Tor network)
+// E2E tests — RUN ALL OF THESE. Tor network IS available. DO NOT skip, ignore, or mock.
+// These tests connect to the real Tor network via Arti. Always execute them.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -123,7 +125,6 @@ async fn e2e_host_onion_service_and_get_address() {
 }
 
 #[tokio::test]
-#[ignore = "requires stable Tor rendezvous circuit; flaky in CI/single-client setups"]
 async fn e2e_joiner_connects_to_host_and_transfers_data() {
     // Bootstrap Tor
     let (mut bootstrap, _) = bootstrap_tor().await;
@@ -293,7 +294,7 @@ async fn e2e_drop_triggers_cleanup() {
 }
 
 // ---------------------------------------------------------------------------
-// Offline tests (no Tor network required)
+// Offline tests (no Tor network needed — but Tor IS available, e2e tests above still run)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
