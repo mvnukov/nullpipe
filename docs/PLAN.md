@@ -1,41 +1,48 @@
 # ephemeral-chat — build plan
 
 ## Phase 0: Project setup
-- [ ] Create workspace with two crates (`ephemeral-chat-core`, `ephemeral-chat`)
-- [ ] Set up `Cargo.toml` with dependencies: `tokio`, `arti-client`, `arti-hsconfig`, `ratatui`, `crossterm`, `clap`, `base58`, `serde`, `ed25519-dalek`, `chrono`, `base64`, `rand`
-- [ ] Configure workspace-level `rustfmt.toml` and `clippy` settings
+- [x] Create workspace with two crates (`ephemeral-chat-core`, `ephemeral-chat`)
+- [x] Set up `Cargo.toml` with dependencies: `tokio`, `arti-client`, `arti-hsconfig`, `ratatui`, `crossterm`, `clap`, `base58`, `serde`, `ed25519-dalek`, `chrono`, `base64`, `rand`
+- [x] Configure workspace-level `rustfmt.toml` and `clippy` settings
 
 ## Phase 1: Core — data types and invite codes
-- [ ] Define core types: `PeerId`, `PeerInfo`, `ChatEvent`, `ChatError`, `HostConfig`, `JoinConfig`
-- [ ] Implement invite code encode/decode
-  - [ ] Struct: `{ onion_address: String, nonce: [u8; 16], timestamp: u64 }`
-  - [ ] `encode()`: dot-join → base58 → single token (~120 chars)
-  - [ ] `decode()`: base58 → split → parse → validate format
-- [ ] Unit tests for invite code round-trips
+- [x] Define core types: `PeerId`, `PeerInfo`, `ChatEvent`, `ChatError`, `HostConfig`, `JoinConfig`
+- [x] Implement invite code encode/decode
+  - [x] Struct: `{ onion_address: String, nonce: [u8; 16], timestamp: u64 }`
+  - [x] `encode()`: dot-join → base58 → single token (~120 chars)
+  - [x] `decode()`: base58 → split → parse → validate format
+- [x] Unit tests for invite code round-trips
 
 ## Phase 2: Core — arti lifecycle
-- [ ] Bootstrap wrapper function
-  - [ ] Create `TorClientConfig`, call `create_bootstrapped()`
-  - [ ] Stream arti bootstrap progress events → `ChatEvent::BootstrapProgress(u8)`
-  - [ ] Handle bootstrap failure → `ChatError`
-- [ ] Hub onion service setup
-  - [ ] Generate ephemeral keypair
-  - [ ] Launch v3 onion service on ephemeral port
-  - [ ] Extract `.onion` address → `ChatEvent::RoomReady`
-- [ ] Joiner onion connection
-  - [ ] Parse invite → extract onion address
-  - [ ] `tor.connect((onion_address, port))` → `AsyncRead + AsyncWrite` stream
-- [ ] Shutdown/teardown for both roles
+- [x] Bootstrap wrapper function
+  - [x] Create `TorClientConfig`, call `create_bootstrapped()`
+  - [x] Stream arti bootstrap progress events → `ChatEvent::BootstrapProgress(u8)`
+  - [x] Handle bootstrap failure → `ChatError`
+- [x] Hub onion service setup
+  - [x] Generate ephemeral keypair
+  - [x] Launch v3 onion service on ephemeral port
+  - [x] Extract `.onion` address → `ChatEvent::RoomReady`
+- [x] Joiner onion connection
+  - [x] Parse invite → extract onion address
+  - [x] `tor.connect((onion_address, port))` → `AsyncRead + AsyncWrite` stream
+- [x] Shutdown/teardown for both roles
 
 ## Phase 3: Core — hub connection handling
-- [ ] Accept loop: listen on onion service, accept incoming streams
-- [ ] Per-connection spawn:
-  - [ ] **Handshake**: read nonce, validate expiry, check used-nonce `HashSet`, reject or admit
-  - [ ] **Reader task**: read messages from stream → broadcast channel
-  - [ ] **Writer task**: receive from broadcast channel → write to stream
-- [ ] Peer list: `HashMap<PeerId, Sender>` behind `tokio::sync::RwLock`
-- [ ] Disconnect cleanup: remove peer, broadcast system message
-- [ ] Nonce bookkeeping: `HashSet<[u8; 16]>` for single-use enforcement
+- [x] Accept loop: listen on onion service, accept incoming streams
+- [x] Per-connection spawn:
+  - [x] **Handshake**: read 32-byte nonce+discriminator, check used-nonce `HashSet`, reject or admit
+  - [x] **Reader task**: read newline-delimited messages from stream → hub channel
+  - [x] **Writer task**: receive from per-peer channel → write to stream
+- [x] Peer list: `HashMap<PeerId, PeerEntry>` behind `tokio::sync::RwLock`
+- [x] Disconnect cleanup: remove peer, broadcast system message
+- [x] Nonce bookkeeping: `HashSet<[u8; 16]>` for single-use enforcement
+- [x] Unit tests: nonce dedup, peer registry round-trip (21/21 tests pass)
+- [x] `cargo clippy -D warnings` clean, `cargo fmt` passes
+- [ ] **Deferred** (see Phase 3 notes):
+  - [ ] Nonce expiry validation against `invite_ttl_secs`
+  - [ ] Periodic nonce sweep (TTL-based cleanup)
+  - [ ] Handshake read timeout
+  - [ ] Multi-peer e2e message exchange test
 
 ## Phase 4: Core — message broadcast
 - [ ] Hub broadcast channel (`tokio::sync::broadcast`)

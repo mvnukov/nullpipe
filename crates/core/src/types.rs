@@ -7,6 +7,12 @@ use crate::error::ChatError;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerId(pub String);
 
+impl std::fmt::Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Metadata about a connected peer.
 #[derive(Clone, Debug)]
 pub struct PeerInfo {
