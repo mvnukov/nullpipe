@@ -31,7 +31,7 @@ pub enum ChatEvent {
     /// Tor bootstrap progress (0–100).
     BootstrapProgress(u8),
     /// Room is ready with the given onion address.
-    RoomReady { onion_address: String },
+    RoomReady { onion_address: String, port: u16 },
     /// An error occurred.
     Error(ChatError),
 }

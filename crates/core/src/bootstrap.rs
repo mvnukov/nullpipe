@@ -1,9 +1,10 @@
 //! Tor bootstrap wrapper using arti-client.
 
 use arti_client::{TorClient, TorClientConfig};
-use futures::Stream;
+use futures::{Stream, StreamExt};
+use tokio::sync::mpsc;
 use tor_rtcompat::PreferredRuntime;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::error::{ChatError, Result};
 use crate::types::ChatEvent;
@@ -24,7 +25,11 @@ impl TorBootstrap {
     }
 
     /// Bootstrap the Tor client. Returns a stream of [`ChatEvent`] for progress
-    /// tracking.
+    /// tracking. Progress events range from 0 to 100.
+    ///
+    /// Bootstrap runs in the background. Poll the returned stream to receive
+    /// `BootstrapProgress` events as they happen. The stream ends with
+    /// `BootstrapProgress(100)` on success or `ChatEvent::Error(...)` on failure.
     pub async fn bootstrap(&mut self) -> Result<impl Stream<Item = ChatEvent>> {
         if self.bootstrapped {
             return Err(ChatError::Connection("already bootstrapped".into()));
@@ -33,17 +38,64 @@ impl TorBootstrap {
         info!("bootstrapping Tor client");
         let config = TorClientConfig::default();
 
-        let client = TorClient::create_bootstrapped(config)
+        // Build an unbootstrapped client so we can subscribe to progress events
+        let client = TorClient::builder()
+            .config(config)
+            .create_unbootstrapped_async()
             .await
-            .map_err(|e| ChatError::Connection(format!("bootstrap failed: {e}")))?;
+            .map_err(|e| ChatError::Connection(format!("create client failed: {e}")))?;
+
+        // Subscribe to bootstrap events before starting bootstrap
+        let events = client.bootstrap_events();
+
+        // Create a channel to forward progress events
+        let (tx, rx) = mpsc::channel::<ChatEvent>(32);
+
+        // Spawn bootstrap in background, forwarding progress events
+        let client_for_bootstrap = client.clone();
+        tokio::spawn(async move {
+            // Forward live progress events
+            let mut event_stream = futures::StreamExt::map(events, |status| {
+                ChatEvent::BootstrapProgress((status.as_frac() * 100.0).min(100.0) as u8)
+            });
+
+            // Run bootstrap in parallel with event forwarding
+            let bootstrap_fut = client_for_bootstrap.bootstrap();
+            let mut bootstrap_done = std::pin::pin!(bootstrap_fut);
+
+            loop {
+                tokio::select! {
+                    biased;
+                    result = &mut bootstrap_done => {
+                        match result {
+                            Ok(()) => {
+                                let _ = tx.send(ChatEvent::BootstrapProgress(100)).await;
+                                info!("Tor bootstrap complete");
+                            }
+                            Err(e) => {
+                                error!("bootstrap failed: {e}");
+                                let _ = tx.send(ChatEvent::Error(
+                                    ChatError::Connection(format!("bootstrap failed: {e}"))
+                                )).await;
+                            }
+                        }
+                        break;
+                    }
+                    event = event_stream.next() => {
+                        if let Some(event) = event {
+                            if tx.send(event).await.is_err() {
+                                break; // receiver dropped
+                            }
+                        }
+                    }
+                }
+            }
+        });
 
         self.client = Some(client);
         self.bootstrapped = true;
 
-        info!("Tor bootstrap complete");
-        Ok(futures::stream::once(async {
-            ChatEvent::BootstrapProgress(100)
-        }))
+        Ok(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 
     /// Return a reference to the bootstrapped Tor client.
