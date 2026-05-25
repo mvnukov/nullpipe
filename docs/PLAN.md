@@ -45,12 +45,12 @@
   - [ ] Multi-peer e2e message exchange test
 
 ## Phase 4: Core — message broadcast
-- [ ] Hub broadcast channel (`tokio::sync::broadcast`)
-- [ ] Hub receives from any peer → fan-out to all other peers
-- [ ] Hub can also send messages (self as sender)
-- [ ] Joiner: send messages upstream, receive messages from hub
-- [ ] Define wire protocol: simple length-prefixed UTF-8 or newline-delimited
-- [ ] Handle partial reads, connection drops gracefully
+- [x] Hub broadcast channel (`tokio::sync::broadcast`)
+- [x] Hub receives from any peer → fan-out to all other peers
+- [x] Hub can also send messages (self as sender)
+- [x] Joiner: send messages upstream, receive messages from hub
+- [x] Define wire protocol: simple length-prefixed UTF-8 or newline-delimited
+- [x] Handle partial reads, connection drops gracefully
 
 ## Phase 5: Core — `RoomHandle` and `EventStream`
 - [ ] Implement `RoomHandle` trait/struct
