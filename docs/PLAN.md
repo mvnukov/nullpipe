@@ -53,14 +53,14 @@
 - [x] Handle partial reads, connection drops gracefully
 
 ## Phase 5: Core — `RoomHandle` and `EventStream`
-- [ ] Implement `RoomHandle` trait/struct
-  - [ ] `send(&self, text: &str) → Result<()>`
-  - [ ] `invite(&self) → Result<String>` (hub only)
-  - [ ] `peers(&self) → Vec<PeerInfo>`
-  - [ ] `quit(&self) → impl Future`
-- [ ] Wire up unified `EventStream` (`tokio::sync::mpsc::Receiver<ChatEvent>`)
-- [ ] Ensure clean shutdown: `quit()` stops all tasks, closes streams, tears down arti
-- [ ] `pub fn host()` and `pub fn join()` entry points
+- [x] Implement `RoomHandle` trait/struct
+  - [x] `send(&self, text: &str) → Result<()>`
+  - [x] `invite(&self) → Result<String>` (hub only)
+  - [x] `peers(&self) → Vec<PeerInfo>`
+  - [x] `quit(&self) → impl Future`
+- [x] Wire up unified `EventStream` (`tokio::sync::mpsc::Receiver<ChatEvent>`)
+- [x] Ensure clean shutdown: `quit()` stops all tasks, closes streams, tears down arti
+- [x] `pub fn host()` and `pub fn join()` entry points
 
 ## Phase 6: Binary — CLI
 - [ ] `clap` CLI: `chat host [--invite-ttl <s>] [--name <n>]`, `chat join <code> [--name <n>]`
