@@ -288,6 +288,7 @@ async fn host_task(
             // Shutdown signal
             _ = shutdown_rx.changed() => {
                 info!("host: shutdown signal received");
+                let _ = event_tx_main.try_send(ChatEvent::RoomClosed);
                 break;
             }
 
@@ -729,6 +730,7 @@ async fn joiner_task(
 
             _ = shutdown_rx.changed() => {
                 info!("joiner: shutdown signal");
+                let _ = event_tx.try_send(ChatEvent::RoomClosed);
                 break;
             }
 

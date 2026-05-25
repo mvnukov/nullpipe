@@ -9,7 +9,11 @@ Work through remaining phases sequentially. Each phase gets two Pi instances: im
 - **Kill previous instance BEFORE spawning a new one** — avoids duplicate session names and confusion
 - **Target sessions by PID** — Pi sessions reuse names (e.g. "nullpipe"), PID is unique
 - **Keep prompts minimal** — task files have all details. Just say `Implement docs/tasks/phaseX.md. Reply when done.` or `Verify docs/tasks/phaseX.md. Reply when done.`
-- **No PID polling** — Pi sessions stay alive after work is done. Wait for the reply message.
+- **Check every 5 minutes** — if no reply within 5 min, send a status check. If still no reply, check tmux pane output.
+- **Fallback if agent forgets to reply:**
+  1. `send_to_session` — "done yet?"
+  2. `tmux capture-pane` — check if sitting at shell prompt
+  3. If stuck — ask user to inspect the pane
 - **No code review** — orchestrator doesn't review code. Spawn, wait, mark, repeat.
 
 ---
@@ -46,13 +50,6 @@ Work through remaining phases sequentially. Each phase gets two Pi instances: im
 - Repeat from Step 1 with the next pending phase
 
 ---
-
-## Phase Order
-1. **Phase 4** — Core: message broadcast ✅ Done
-2. **Phase 5** — Core: RoomHandle and EventStream (implementer running)
-3. **Phase 6** — Binary: CLI
-4. **Phase 7** — Binary: TUI
-5. **Phase 8** — Integration and polish
 
 ## Stopping Conditions
 - All phases 4-8 complete

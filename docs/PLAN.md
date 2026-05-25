@@ -63,9 +63,9 @@
 - [x] `pub fn host()` and `pub fn join()` entry points
 
 ## Phase 6: Binary — CLI
-- [ ] `clap` CLI: `chat host [--invite-ttl <s>] [--name <n>]`, `chat join <code> [--name <n>]`
-- [ ] `--timestamps` flag
-- [ ] Name persistence: read/write `~/.config/ephemeral-chat/name`, prompt if missing
+- [x] `clap` CLI: `chat host [--invite-ttl <s>] [--name <n>]`, `chat join <code> [--name <n>]`
+- [x] `--timestamps` flag
+- [x] Name persistence: read/write `~/.config/ephemeral-chat/name`, prompt if missing
 
 ## Phase 7: Binary — TUI
 - [ ] Terminal setup: `crossterm` backend, enter raw mode, alternate screen

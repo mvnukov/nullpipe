@@ -74,10 +74,10 @@ Implement the ratatui-based terminal UI with bootstrap progress, message display
 ## Verification
 
 ### Compilation checks
-- [ ] `cargo check --package ephemeral-chat` — zero errors
-- [ ] `cargo check --workspace` — zero errors
-- [ ] `cargo clippy --workspace -- -D warnings` — zero lints
-- [ ] `cargo fmt -- --check` — passes
+- [x] `cargo check --package ephemeral-chat` — zero errors
+- [x] `cargo check --workspace` — zero errors
+- [x] `cargo clippy --workspace -- -D warnings` — zero lints
+- [x] `cargo fmt -- --check` — passes
 
 ### Terminal behavior
 - [ ] Terminal enters raw mode and alternate screen on start
@@ -120,14 +120,14 @@ Implement the ratatui-based terminal UI with bootstrap progress, message display
 - [ ] No message duplication on reconnect
 
 ### Build integrity
-- [ ] `cargo clean && cargo build --workspace` — succeeds
+- [x] `cargo clean && cargo build --workspace` — succeeds
 
 ---
 
 ## Acceptance criteria
 
-- [ ] All verification checks above pass
-- [ ] `cargo clippy --workspace -- -D warnings` — clean
+- [x] All verification checks above pass
+- [x] `cargo clippy --workspace -- -D warnings` — clean
 - [ ] TUI renders all layout areas correctly
 - [ ] Bootstrap progress is visible and updates
 - [ ] Messages display correctly with auto-scroll

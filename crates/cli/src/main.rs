@@ -1,57 +1,498 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ephemeral_chat_core::{host, join, HostConfig, JoinConfig};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ephemeral_chat_core::{host, join, ChatEvent, HostConfig, JoinConfig, PeerInfo, RoomHandle};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
+    Frame, Terminal,
+};
+use tokio::sync::mpsc;
 
-const DEFAULT_INVITE_TTL: u64 = 300; // 5 minutes
+const DEFAULT_INVITE_TTL: u64 = 300;
 const CONFIG_DIR_NAME: &str = "ephemeral-chat";
 const NAME_FILE: &str = "name";
+const APP_NAME: &str = "ephemeral-chat";
 
-#[derive(Parser)]
-#[command(name = "chat")]
-#[command(about = "Ephemeral peer-to-peer chat over Tor", long_about = None)]
-#[command(version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
+const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const TICK_MS: u64 = 100;
+
+// ---------------------------------------------------------------------------
+// Display message
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct DispMsg {
+    ts: Option<chrono::DateTime<chrono::Local>>,
+    name: String,
+    text: String,
+    system: bool,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Host a new chat room
-    Host {
-        /// Invite code time-to-live in seconds
-        #[arg(long, default_value_t = DEFAULT_INVITE_TTL, value_name = "SECONDS")]
-        invite_ttl: u64,
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
 
-        /// Display name for this session
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Show timestamps on messages
-        #[arg(long, default_value_t = false)]
-        timestamps: bool,
-    },
-    /// Join an existing chat room
-    Join {
-        /// Invite code to join the room
-        invite_code: String,
-
-        /// Display name for this session
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Show timestamps on messages
-        #[arg(long, default_value_t = false)]
-        timestamps: bool,
-    },
+#[derive(PartialEq)]
+enum Mode {
+    Bootstrap { progress: u8, msg: String },
+    Running,
+    ShuttingDown { since: Instant },
 }
 
-/// Resolve the display name: CLI flag > persisted file > prompt user.
+struct App {
+    mode: Mode,
+    handle: Option<RoomHandle>,
+    msgs: Vec<DispMsg>,
+    input: String,
+    cursor: usize,
+    scroll: usize, // 0 = at bottom
+    onion: Option<String>,
+    peers: Vec<PeerInfo>,
+    timestamps: bool,
+    quit: bool,
+    bootstrap_start: Instant,
+    input_focused: bool,
+}
+
+impl App {
+    fn new(_name: String, timestamps: bool) -> Self {
+        Self {
+            mode: Mode::Bootstrap {
+                progress: 0,
+                msg: "starting tor...".into(),
+            },
+            handle: None,
+            msgs: Vec::new(),
+            input: String::new(),
+            cursor: 0,
+            scroll: 0,
+            onion: None,
+            peers: Vec::new(),
+            timestamps,
+            quit: false,
+            bootstrap_start: Instant::now(),
+            input_focused: true,
+        }
+    }
+
+    fn push(&mut self, name: String, text: String, system: bool) {
+        let ts = self.timestamps.then(chrono::Local::now);
+        self.msgs.push(DispMsg {
+            ts,
+            name,
+            text,
+            system,
+        });
+    }
+
+    fn at_bottom(&self) -> bool {
+        self.scroll == 0
+    }
+
+    fn handle_event(&mut self, ev: ChatEvent) {
+        match ev {
+            ChatEvent::BootstrapProgress(pct) => {
+                if let Mode::Bootstrap { progress, msg } = &mut self.mode {
+                    *progress = pct;
+                    if *progress < 100 {
+                        *msg = "bootstrapping tor...".to_string();
+                    }
+                }
+            }
+            ChatEvent::RoomReady { onion_address, .. } => {
+                self.onion = Some(onion_address.clone());
+                self.mode = Mode::Running;
+                let truncated = if onion_address.len() > 12 {
+                    &onion_address[..12]
+                } else {
+                    &onion_address
+                };
+                self.push(
+                    "system".into(),
+                    format!("room ready: {}...", truncated),
+                    true,
+                );
+            }
+            ChatEvent::PeerJoin(info) => {
+                if !self.peers.iter().any(|p| p.id == info.id) {
+                    self.peers.push(info.clone());
+                }
+                self.push("system".into(), format!("{} joined", info.name), true);
+            }
+            ChatEvent::PeerLeave(pid) => {
+                self.peers.retain(|p| p.id != pid);
+                self.push("system".into(), format!("{} left", pid), true);
+            }
+            ChatEvent::Message { name, text, .. } => {
+                self.push(name, text, false);
+            }
+            ChatEvent::InviteCreated { code } => {
+                self.push("system".into(), format!("new invite code: {}", code), true);
+            }
+            ChatEvent::RoomClosed => {
+                self.push("system".into(), "room closed".into(), true);
+                self.mode = Mode::ShuttingDown {
+                    since: Instant::now(),
+                };
+            }
+            ChatEvent::Error(e) => {
+                self.push("system".into(), format!("error: {}", e), true);
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
+        // Ctrl-C always triggers quit
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.quit = true;
+            return;
+        }
+
+        match &self.mode {
+            Mode::Bootstrap { .. } | Mode::ShuttingDown { .. } => {
+                // input locked
+            }
+            Mode::Running => match key.code {
+                KeyCode::Enter => {
+                    self.send();
+                }
+                KeyCode::Char(c)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.input.insert(self.cursor, c);
+                    self.cursor += 1;
+                }
+                KeyCode::Backspace => {
+                    if self.cursor > 0 {
+                        self.input.remove(self.cursor - 1);
+                        self.cursor -= 1;
+                    }
+                }
+                KeyCode::Delete => {
+                    if self.cursor < self.input.len() {
+                        self.input.remove(self.cursor);
+                    }
+                }
+                KeyCode::Left => {
+                    if self.cursor > 0 {
+                        self.cursor -= 1;
+                    }
+                }
+                KeyCode::Right => {
+                    if self.cursor < self.input.len() {
+                        self.cursor += 1;
+                    }
+                }
+                KeyCode::Home => {
+                    self.cursor = 0;
+                }
+                KeyCode::End => {
+                    self.cursor = self.input.len();
+                }
+                KeyCode::Up => {
+                    self.scroll += 1;
+                }
+                KeyCode::Down => {
+                    self.scroll = self.scroll.saturating_sub(1);
+                }
+                KeyCode::PageUp => {
+                    self.scroll += 10;
+                }
+                KeyCode::PageDown => {
+                    self.scroll = self.scroll.saturating_sub(10);
+                }
+                _ => {}
+            },
+        }
+    }
+
+    fn send(&mut self) {
+        let text = std::mem::take(&mut self.input);
+        self.cursor = 0;
+        self.scroll = 0; // auto-scroll on send
+
+        if text.is_empty() {
+            return;
+        }
+
+        if let Some(cmd) = text.strip_prefix('/') {
+            self.command(cmd);
+            return;
+        }
+
+        if let Some(h) = &self.handle {
+            let h = h.clone();
+            let t = text.clone();
+            tokio::spawn(async move {
+                let _ = h.send(&t).await;
+            });
+        }
+    }
+
+    fn command(&mut self, cmd: &str) {
+        let h = match &self.handle {
+            Some(h) => h.clone(),
+            None => {
+                self.push("system".into(), "room not ready".into(), true);
+                return;
+            }
+        };
+
+        match cmd {
+            "invite" => {
+                let rt = tokio::runtime::Handle::current();
+                match rt.block_on(h.invite()) {
+                    Ok(code) => {
+                        self.push("system".into(), format!("invite code: {}", code), true);
+                    }
+                    Err(e) => {
+                        self.push("system".into(), format!("invite failed: {}", e), true);
+                    }
+                }
+            }
+            "peers" => {
+                let rt = tokio::runtime::Handle::current();
+                let ps = rt.block_on(h.peers());
+                if ps.is_empty() {
+                    self.push("system".into(), "no peers connected".into(), true);
+                } else {
+                    let names: Vec<_> = ps.iter().map(|p| p.name.as_str()).collect();
+                    self.push(
+                        "system".into(),
+                        format!("peers: {}", names.join(", ")),
+                        true,
+                    );
+                }
+            }
+            "quit" => {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(h.quit());
+                self.quit = true;
+            }
+            _ => {
+                self.push("system".into(), format!("unknown command: /{}", cmd), true);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+fn render(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    // Layout: top bar (1) | messages (flex) | status (1) | input (1)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    // Top bar
+    let top_text = if let Some(addr) = &app.onion {
+        let truncated = if addr.len() > 12 { &addr[..12] } else { addr };
+        format!("{} [{}...]", APP_NAME, truncated)
+    } else {
+        APP_NAME.to_string()
+    };
+    let top = Paragraph::new(Span::styled(
+        top_text,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(top, chunks[0]);
+
+    match &app.mode {
+        Mode::Bootstrap { progress, msg } => {
+            render_bootstrap(frame, app, chunks[1], *progress, msg);
+        }
+        Mode::Running | Mode::ShuttingDown { .. } => {
+            render_messages(frame, app, chunks[1]);
+        }
+    }
+
+    // Status bar
+    render_status(frame, app, chunks[2]);
+
+    // Input bar
+    render_input(frame, app, chunks[3]);
+}
+
+fn render_bootstrap(
+    frame: &mut Frame,
+    app: &App,
+    area: ratatui::layout::Rect,
+    progress: u8,
+    msg: &str,
+) {
+    let elapsed = app.bootstrap_start.elapsed().as_secs();
+    let frame_idx = (elapsed as usize) % SPINNER.len();
+    let spinner = SPINNER[frame_idx];
+
+    let line = if progress == 0 {
+        format!("  {}  {}", spinner, msg)
+    } else if progress < 100 {
+        format!("  {}  {}  {}%", spinner, msg, progress)
+    } else {
+        format!("  {}  connecting...", spinner)
+    };
+
+    let p = Paragraph::new(line).block(Block::default().style(Style::default().fg(Color::Yellow)));
+    frame.render_widget(p, area);
+}
+
+fn render_messages(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let max_visible = area.height as usize;
+    let total = app.msgs.len();
+
+    // Calculate visible window
+    let visible_end = total.saturating_sub(app.scroll);
+    let visible_start = visible_end.saturating_sub(max_visible);
+
+    let lines: Vec<Line> = app.msgs[visible_start..visible_end]
+        .iter()
+        .map(|m| {
+            let prefix = if m.system {
+                Span::styled(
+                    "[system] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::DIM),
+                )
+            } else {
+                Span::styled(
+                    format!("[{}] ", m.name),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
+            };
+
+            let ts_span = m.ts.map(|ts: chrono::DateTime<chrono::Local>| {
+                Span::styled(
+                    format!("{} ", ts.format("%H:%M")),
+                    Style::default().fg(Color::DarkGray),
+                )
+            });
+
+            let text_span = Span::raw(&m.text);
+
+            let mut spans = Vec::new();
+            if let Some(ts) = ts_span {
+                spans.push(ts);
+            }
+            spans.push(prefix);
+            spans.push(text_span);
+            Line::from(spans)
+        })
+        .collect();
+
+    let p = Paragraph::new(lines);
+    frame.render_widget(p, area);
+
+    // Scroll indicator
+    if !app.at_bottom() {
+        let indicator = Span::styled(
+            " ▼ more below",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+        let indicator_area = ratatui::layout::Rect {
+            x: area.x,
+            y: area.bottom().saturating_sub(1),
+            width: area.width.min(15),
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(indicator), indicator_area);
+    }
+}
+
+fn render_status(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let text = if app.peers.is_empty() {
+        "no peers".to_string()
+    } else {
+        let names: Vec<_> = app.peers.iter().map(|p| p.name.as_str()).collect();
+        format!("peers: {}", names.join(", "))
+    };
+
+    let style = match &app.mode {
+        Mode::ShuttingDown { .. } => Style::default().fg(Color::Red),
+        _ => Style::default().fg(Color::Gray),
+    };
+
+    let p = Paragraph::new(Span::styled(text, style));
+    frame.render_widget(p, area);
+}
+
+fn render_input(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let prompt = "> ";
+    let text = format!("{}{}", prompt, app.input);
+
+    let style = match (&app.mode, app.input_focused) {
+        (Mode::Running, true) => Style::default().fg(Color::White),
+        (Mode::Running, false) => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+        _ => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    };
+
+    let p = Paragraph::new(Span::styled(text, style));
+    frame.render_widget(p, area);
+}
+
+// ---------------------------------------------------------------------------
+// Terminal helpers
+// ---------------------------------------------------------------------------
+
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    Terminal::new(backend).map_err(Into::into)
+}
+
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+}
+
+fn install_panic_hook() {
+    let orig = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        orig(info);
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Name resolution (same as before)
+// ---------------------------------------------------------------------------
+
 fn resolve_name(override_name: Option<String>) -> io::Result<String> {
-    // CLI flag takes priority
     if let Some(name) = override_name {
         let trimmed = name.trim().to_string();
         if !trimmed.is_empty() {
@@ -62,7 +503,6 @@ fn resolve_name(override_name: Option<String>) -> io::Result<String> {
     let config_dir = config_dir();
     let name_path = config_dir.join(NAME_FILE);
 
-    // Try reading persisted name
     if let Ok(contents) = fs::read_to_string(&name_path) {
         let trimmed = contents.trim().to_string();
         if !trimmed.is_empty() {
@@ -70,7 +510,6 @@ fn resolve_name(override_name: Option<String>) -> io::Result<String> {
         }
     }
 
-    // Prompt user for name
     print!("Enter display name: ");
     io::stdout().flush()?;
 
@@ -85,7 +524,6 @@ fn resolve_name(override_name: Option<String>) -> io::Result<String> {
         ));
     }
 
-    // Persist name for future runs
     if let Err(e) = fs::create_dir_all(&config_dir) {
         eprintln!("Warning: could not create config directory: {e}");
     } else if let Err(e) = fs::write(&name_path, &name) {
@@ -98,7 +536,6 @@ fn resolve_name(override_name: Option<String>) -> io::Result<String> {
     Ok(name)
 }
 
-/// Get the config directory path (~/.config/ephemeral-chat).
 fn config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -106,8 +543,50 @@ fn config_dir() -> PathBuf {
         .join(CONFIG_DIR_NAME)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+#[derive(Parser)]
+#[command(name = "chat")]
+#[command(about = "Ephemeral peer-to-peer chat over Tor", long_about = None)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Host a new chat room
+    Host {
+        #[arg(long, default_value_t = DEFAULT_INVITE_TTL, value_name = "SECONDS")]
+        invite_ttl: u64,
+
+        #[arg(long)]
+        name: Option<String>,
+
+        #[arg(long, default_value_t = false)]
+        timestamps: bool,
+    },
+    /// Join an existing chat room
+    Join {
+        invite_code: String,
+
+        #[arg(long)]
+        name: Option<String>,
+
+        #[arg(long, default_value_t = false)]
+        timestamps: bool,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let Some(command) = cli.command else {
@@ -120,52 +599,139 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     };
 
-    match command {
+    let (name, timestamps) = match &command {
         Commands::Host {
-            invite_ttl,
-            name,
-            timestamps: _,
+            name, timestamps, ..
         } => {
-            let resolved_name = resolve_name(name)
+            let n = resolve_name(name.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
-
-            println!("Hosting as '{resolved_name}' (invite TTL: {invite_ttl}s)");
-
-            let config = HostConfig {
-                name: resolved_name,
-                invite_ttl_secs: invite_ttl,
-            };
-
-            let (handle, _event_stream) = host(config);
-
-            // Wait for Ctrl-C
-            tokio::signal::ctrl_c().await?;
-            println!("\nShutting down...");
-            handle.quit().await;
+            (n, *timestamps)
         }
         Commands::Join {
-            invite_code,
-            name,
-            timestamps: _,
+            name, timestamps, ..
         } => {
-            let resolved_name = resolve_name(name)
+            let n = resolve_name(name.clone())
                 .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
+            (n, *timestamps)
+        }
+    };
 
-            println!("Joining as '{resolved_name}'");
+    // Setup terminal
+    install_panic_hook();
+    let mut terminal = setup_terminal()?;
 
-            let config = JoinConfig {
-                name: resolved_name,
-                invite_code,
+    // Start room
+    let (handle, mut event_rx) = match &command {
+        Commands::Host { invite_ttl, .. } => {
+            let config = HostConfig {
+                name: name.clone(),
+                invite_ttl_secs: *invite_ttl,
             };
+            host(config)
+        }
+        Commands::Join { invite_code, .. } => {
+            let config = JoinConfig {
+                name: name.clone(),
+                invite_code: invite_code.clone(),
+            };
+            join(config)
+        }
+    };
 
-            let (handle, _event_stream) = join(config);
+    // App state
+    let mut app = App::new(name, timestamps);
+    app.handle = Some(handle);
 
-            // Wait for Ctrl-C
-            tokio::signal::ctrl_c().await?;
-            println!("\nShutting down...");
-            handle.quit().await;
+    // Input channel from spawn_blocking task
+    let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyEvent>();
+
+    // Spawn input polling on a blocking thread
+    tokio::task::spawn_blocking(move || {
+        loop {
+            match event::poll(Duration::from_millis(TICK_MS)) {
+                Ok(true) => {
+                    if let Ok(Event::Key(key)) = event::read() {
+                        let _ = key_tx.send(key);
+                    }
+                }
+                Ok(false) => {
+                    // timeout — tick
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Tick timer for spinner animation during bootstrap
+    let mut ticker = tokio::time::interval(Duration::from_millis(TICK_MS));
+
+    // Shutdown deadline
+    let mut shutdown_deadline: Option<Instant> = None;
+
+    // Main loop
+    loop {
+        tokio::select! {
+            // Key input
+            Some(key) = key_rx.recv() => {
+                app.handle_key(key);
+            }
+
+            // Chat events
+            maybe_ev = event_rx.recv() => {
+                match maybe_ev {
+                    Some(ev) => app.handle_event(ev),
+                    None => {
+                        // Event stream ended — room shut down
+                        if !matches!(app.mode, Mode::ShuttingDown { .. }) {
+                            app.push("system".into(), "connection lost".into(), true);
+                            app.mode = Mode::ShuttingDown { since: Instant::now() };
+                        }
+                    }
+                }
+            }
+
+            // Timer tick (for spinner redraw)
+            _ = ticker.tick() => {}
+        }
+
+        // Check shutdown deadline (5 seconds max)
+        if let Mode::ShuttingDown { since } = app.mode {
+            if since.elapsed() > Duration::from_secs(5) {
+                app.quit = true;
+            }
+        }
+
+        // Draw
+        if let Err(e) = terminal.draw(|f| render(f, &app)) {
+            eprintln!("render error: {e}");
+            app.quit = true;
+        }
+
+        // Check quit
+        if app.quit {
+            break;
+        }
+
+        // Auto-set shutdown deadline when entering ShuttingDown
+        if matches!(app.mode, Mode::ShuttingDown { .. }) && shutdown_deadline.is_none() {
+            shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
+        }
+
+        // Force quit after deadline
+        if let Some(dl) = shutdown_deadline {
+            if Instant::now() >= dl {
+                break;
+            }
         }
     }
+
+    // Graceful shutdown
+    if let Some(h) = app.handle.take() {
+        let _ = tokio::time::timeout(Duration::from_secs(2), async { h.quit().await }).await;
+    }
+
+    // Restore terminal
+    restore_terminal();
 
     Ok(())
 }

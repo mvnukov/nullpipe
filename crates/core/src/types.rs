@@ -38,6 +38,10 @@ pub enum ChatEvent {
     BootstrapProgress(u8),
     /// Room is ready with the given onion address.
     RoomReady { onion_address: String, port: u16 },
+    /// An invite code was generated.
+    InviteCreated { code: String },
+    /// The room has been closed.
+    RoomClosed,
     /// An error occurred.
     Error(ChatError),
 }
