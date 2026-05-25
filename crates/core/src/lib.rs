@@ -4,6 +4,7 @@ pub mod hub;
 pub mod invite;
 pub mod joiner;
 pub mod types;
+pub(crate) mod wire;
 
 pub use bootstrap::TorBootstrap;
 pub use error::{ChatError, Result};

@@ -54,6 +54,11 @@ impl TorBootstrap {
         // Spawn bootstrap in background, forwarding progress events
         let client_for_bootstrap = client.clone();
         tokio::spawn(async move {
+            // Emit initial progress so consumers always see at least one event
+            if tx.send(ChatEvent::BootstrapProgress(0)).await.is_err() {
+                return; // receiver dropped immediately
+            }
+
             // Forward live progress events
             let mut event_stream = futures::StreamExt::map(events, |status| {
                 ChatEvent::BootstrapProgress((status.as_frac() * 100.0).min(100.0) as u8)

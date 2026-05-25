@@ -13,7 +13,6 @@ use ephemeral_chat_core::invite::{encode, InvitePayload};
 use ephemeral_chat_core::joiner::Joiner;
 use ephemeral_chat_core::types::ChatEvent;
 use futures::StreamExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
 /// Helper: bootstrap a Tor client and return the bootstrapped instance.
@@ -132,7 +131,7 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
 
     // Host a room
     let port = 80u16;
-    let mut room = HostedRoom::new(client, port)
+    let room = HostedRoom::new(client, port)
         .await
         .expect("HostedRoom::new failed");
     let addr = room.address().to_string();
@@ -149,7 +148,7 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
     };
     let invite_code = encode(&invite_payload).expect("encode invite");
 
-    // Joiner connects (in a spawned task so hub can accept concurrently)
+    // Joiner connects and uses send/recv API
     let client_joiner = bootstrap.client().expect("client ref").clone();
     let invite_code_clone = invite_code.clone();
     let joiner_handle = tokio::spawn(async move {
@@ -161,60 +160,61 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
         .await
         .expect("Joiner::connect failed");
 
-        // Send data from joiner to hub
-        let write_data = b"hello from joiner";
+        // Send a chat message to the hub
         joiner
-            .stream()
-            .expect("joiner stream")
-            .write_all(write_data)
+            .send("hello from joiner")
             .await
-            .expect("joiner write failed");
-        joiner
-            .stream()
-            .expect("joiner stream")
-            .flush()
-            .await
-            .expect("joiner flush failed");
+            .expect("joiner send failed");
 
-        // Read response from hub
-        let mut buf = [0u8; 64];
-        let n = joiner
-            .stream()
-            .expect("joiner stream")
-            .read(&mut buf)
+        // Read response from hub via recv stream
+        let mut recv_stream = joiner.recv();
+        let mut response_text = String::new();
+        while let Some(result) = timeout(Duration::from_secs(30), recv_stream.next())
             .await
-            .expect("joiner read failed");
-        let response = String::from_utf8_lossy(&buf[..n]).to_string();
+            .ok()
+            .flatten()
+        {
+            if let Ok(ChatEvent::Message { text, .. }) = result {
+                response_text = text;
+                break;
+            }
+        }
 
         joiner.shutdown();
-        response
+        response_text
     });
 
-    // Hub accepts the incoming peer stream
-    let mut peer_stream = tokio::time::timeout(Duration::from_secs(90), room.accept_peer())
-        .await
-        .expect("accept_peer timeout")
-        .expect("accept_peer returned None");
-
-    // Read data from joiner
-    let mut buf = [0u8; 64];
-    let n = peer_stream.read(&mut buf).await.expect("hub read failed");
-    let received = String::from_utf8_lossy(&buf[..n]).to_string();
-    assert_eq!(received, "hello from joiner");
-
-    // Write response back to joiner
-    let response = b"hello from hub";
-    peer_stream
-        .write_all(response)
-        .await
-        .expect("hub write failed");
-    peer_stream.flush().await.expect("hub flush failed");
+    // Hub accepts the incoming peer and reads/writes via wire protocol
+    let mut hub = ephemeral_chat_core::hub::Hub::new(room);
+    let hub_run = tokio::spawn(async move {
+        while let Some(event) = timeout(Duration::from_secs(90), hub.next_event())
+            .await
+            .expect("hub next_event timeout")
+        {
+            match event {
+                ChatEvent::Message { ref text, .. } => {
+                    if text == "hello from joiner" {
+                        // Echo back through the hub
+                        hub.broadcast_hub(&format!("hub received: {text}")).await;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        hub
+    });
 
     // Verify joiner received the response
     let joiner_response = joiner_handle.await.expect("joiner task panicked");
-    assert_eq!(joiner_response, "hello from hub");
+    assert!(
+        joiner_response.contains("hello from joiner"),
+        "expected joiner to receive echo, got: {joiner_response}"
+    );
 
-    room.shutdown();
+    // Clean up
+    let mut hub = hub_run.await.expect("hub task panicked");
+    hub.shutdown();
     bootstrap.shutdown();
 }
 

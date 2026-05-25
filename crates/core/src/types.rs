@@ -22,7 +22,7 @@ pub struct PeerInfo {
 }
 
 /// Events emitted by the chat room.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChatEvent {
     /// A chat message from a peer.
     Message {
