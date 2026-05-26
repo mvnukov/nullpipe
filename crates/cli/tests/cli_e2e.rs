@@ -169,7 +169,6 @@ fn cli_join_invalid_code_no_crash() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore]
 fn cli_bootstrap_failure_handling() {
     let mut child = spawn_chat(&["host"]);
     std::thread::sleep(std::time::Duration::from_secs(10));
@@ -187,7 +186,6 @@ fn cli_bootstrap_failure_handling() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore]
 async fn cli_two_process_chat() {
     use tokio::time::{timeout, Duration};
 

@@ -16,14 +16,13 @@ use base58::FromBase58;
 use ephemeral_chat_core::error::ChatError;
 use ephemeral_chat_core::invite::{decode as decode_invite, encode, InvitePayload};
 use ephemeral_chat_core::types::{ChatEvent, HostConfig, JoinConfig, PeerId, PeerInfo};
-use ephemeral_chat_core::{host, join};
+use ephemeral_chat_core::{host, host_with_client, join, join_with_client, SharedTorClient};
 use tokio::time::timeout;
 
 use std::time::Duration;
 
-// Arti bootstrap takes 30-90s on first run. Use generous timeouts.
-const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(150);
-const FULL_TEST_TIMEOUT: Duration = Duration::from_secs(300);
+const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
+const FULL_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -155,20 +154,21 @@ async fn e2e_host_generates_valid_invite_code() {
 
 #[tokio::test]
 async fn e2e_joiner_connects_and_peer_join_fires() {
-    let (host_h, mut host_ev) = host(HostConfig {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+    let (host_h, mut host_ev) = host_with_client(HostConfig {
         name: "host".into(),
         invite_ttl_secs: 300,
-    });
+    }, &tor);
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join(JoinConfig {
+    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
         name: "joiner".into(),
         invite_code: code,
-    });
+    }, &tor);
 
     // Host sees PeerJoin
     let (host_peer, _) = wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
@@ -194,20 +194,21 @@ async fn e2e_joiner_connects_and_peer_join_fires() {
 
 #[tokio::test]
 async fn e2e_messages_flow_bidirectional() {
-    let (host_h, mut host_ev) = host(HostConfig {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+    let (host_h, mut host_ev) = host_with_client(HostConfig {
         name: "host".into(),
         invite_ttl_secs: 300,
-    });
+    }, &tor);
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join(JoinConfig {
+    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
         name: "joiner".into(),
         invite_code: code,
-    });
+    }, &tor);
 
     wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -243,20 +244,21 @@ async fn e2e_messages_flow_bidirectional() {
 
 #[tokio::test]
 async fn e2e_peer_leave_on_joiner_quit() {
-    let (host_h, mut host_ev) = host(HostConfig {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+    let (host_h, mut host_ev) = host_with_client(HostConfig {
         name: "host".into(),
         invite_ttl_secs: 300,
-    });
+    }, &tor);
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join(JoinConfig {
+    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
         name: "joiner".into(),
         invite_code: code,
-    });
+    }, &tor);
 
     let (host_peer, _) = wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -285,20 +287,21 @@ async fn e2e_peer_leave_on_joiner_quit() {
 
 #[tokio::test]
 async fn e2e_room_close_notifies_joiner() {
-    let (host_h, mut host_ev) = host(HostConfig {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+    let (host_h, mut host_ev) = host_with_client(HostConfig {
         name: "host".into(),
         invite_ttl_secs: 300,
-    });
+    }, &tor);
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (_joiner_h, mut joiner_ev) = join(JoinConfig {
+    let (_joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
         name: "joiner".into(),
         invite_code: code,
-    });
+    }, &tor);
 
     wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -426,10 +429,11 @@ async fn e2e_host_send_message_no_peers_room_stays_open() {
 
 #[tokio::test]
 async fn e2e_cli_commands_work_in_async_context() {
-    let (handle, mut events) = host(HostConfig {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+    let (handle, mut events) = host_with_client(HostConfig {
         name: "cli-demo".into(),
         invite_ttl_secs: 300,
-    });
+    }, &tor);
 
     wait_for(&mut events, BOOTSTRAP_TIMEOUT, room_ready)
         .await

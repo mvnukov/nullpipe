@@ -21,6 +21,12 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Write timeout for avoiding blocked writes.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Maximum number of connection retry attempts for transient Tor failures.
+const MAX_CONNECT_RETRIES: u32 = 3;
+
+/// Base delay between connection retries (doubles each attempt).
+const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
+
 /// A joiner that connects to a hosted onion service via Tor.
 ///
 /// After connecting, the joiner holds a write half of the stream for sending
@@ -34,6 +40,54 @@ pub struct Joiner {
     name: Option<String>,
     /// Channel from the reader task to the recv stream.
     event_rx: mpsc::Receiver<Result<ChatEvent>>,
+}
+
+/// Retry a fallible async operation on transient failures until `timeout_dur` elapses
+/// or all retries are exhausted.
+async fn retry_transient<F, Fut, T>(
+    timeout_dur: Duration,
+    max_retries: u32,
+    base_delay: Duration,
+    mut operation: F,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout_dur;
+    let mut last_err = None;
+
+    for attempt in 0..max_retries {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+
+        let remaining = deadline - tokio::time::Instant::now();
+        match timeout(remaining, operation()).await {
+            Ok(Ok(value)) => return Ok(value),
+            Ok(Err(e)) => {
+                let is_transient = format!("{e}").contains("transient")
+                    || format!("{e}").contains("timed out")
+                    || format!("{e}").contains("timeout");
+                last_err = Some(e);
+                if !is_transient || attempt == max_retries - 1 {
+                    break;
+                }
+                let delay = base_delay.saturating_mul(2u32.pow(attempt));
+                let delay = delay.min(remaining / 2);
+                info!("attempt {}/{} failed (transient), retrying in {:?}", attempt + 1, max_retries, delay);
+                tokio::time::sleep(delay).await;
+            }
+            Err(_) => {
+                return Err(ChatError::Connection("operation timed out".into()));
+            }
+        }
+    }
+
+    Err(ChatError::Connection(format!(
+        "operation failed: {}",
+        last_err.map_or("timed out".to_string(), |e| format!("{e}"))
+    )))
 }
 
 impl Joiner {
@@ -56,14 +110,12 @@ impl Joiner {
         info!("connecting to onion service: {}", payload.onion_address);
 
         let target = (payload.onion_address.as_str(), 80);
-        let stream: DataStream = timeout(timeout_dur, tor_client.connect(target))
-            .await
-            .map_err(|_| ChatError::Connection("connection timed out".into()))?
-            .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
-
-        info!("connected to onion service");
-
-        Self::from_stream(stream).await
+        retry_transient(timeout_dur, MAX_CONNECT_RETRIES, RETRY_BASE_DELAY, || async {
+            let stream = tor_client.connect(target).await
+                .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
+            info!("connected to onion service, starting handshake");
+            Self::from_stream(stream).await
+        }).await
     }
 
     /// Connect to a specific onion address and port.
@@ -84,14 +136,12 @@ impl Joiner {
         timeout_dur: Duration,
     ) -> Result<Self> {
         let target = (onion_address, port);
-        let stream: DataStream = timeout(timeout_dur, tor_client.connect(target))
-            .await
-            .map_err(|_| ChatError::Connection("connection timed out".into()))?
-            .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
-
-        info!("connected to {onion_address}:{port}");
-
-        Self::from_stream(stream).await
+        retry_transient(timeout_dur, MAX_CONNECT_RETRIES, RETRY_BASE_DELAY, || async {
+            let stream = tor_client.connect(target).await
+                .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
+            info!("connected to {onion_address}:{port}, starting handshake");
+            Self::from_stream(stream).await
+        }).await
     }
 
     /// Build a Joiner from an established stream: handshake, split, spawn reader.

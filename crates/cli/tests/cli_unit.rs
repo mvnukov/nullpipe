@@ -7,9 +7,7 @@
 //! the original block_on panic bug by verifying that dispatch_command
 //! uses tokio::spawn (async path) rather than Handle::current().block_on().
 
-use ephemeral_chat_core::types::{ChatEvent, PeerId, PeerInfo};
-use std::sync::Arc;
-use std::sync::Mutex;
+use ephemeral_chat_core::types::{PeerId, PeerInfo};
 use tokio::sync::mpsc;
 
 /// Minimal command result enum for testing (mirrors main.rs CmdResult)

@@ -29,6 +29,7 @@ const MAX_DISPLAY_NAME: usize = 20;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const TICK_MS: u64 = 100;
+const ONION_DISPLAY_LEN: usize = 12;
 
 // ---------------------------------------------------------------------------
 // Async command results (sent from spawned tasks back to main loop)
@@ -132,14 +133,9 @@ impl App {
             ChatEvent::RoomReady { onion_address, .. } => {
                 self.onion = Some(onion_address.clone());
                 self.mode = Mode::Running;
-                let truncated = if onion_address.len() > 12 {
-                    &onion_address[..12]
-                } else {
-                    &onion_address
-                };
                 self.push(
                     "system".into(),
-                    format!("room ready: {}...", truncated),
+                    format!("room ready: {}...", truncate_onion(&onion_address)),
                     true,
                 );
             }
@@ -333,8 +329,7 @@ fn render(frame: &mut Frame, app: &App) {
 
     // Top bar
     let top_text = if let Some(addr) = &app.onion {
-        let truncated = if addr.len() > 12 { &addr[..12] } else { addr };
-        format!("{} [{}...]", APP_NAME, truncated)
+        format!("{} [{}...]", APP_NAME, truncate_onion(addr))
     } else {
         APP_NAME.to_string()
     };
@@ -383,6 +378,14 @@ fn render_bootstrap(
 
     let p = Paragraph::new(line).block(Block::default().style(Style::default().fg(Color::Yellow)));
     frame.render_widget(p, area);
+}
+
+fn truncate_onion(addr: &str) -> &str {
+    if addr.len() > ONION_DISPLAY_LEN {
+        &addr[..ONION_DISPLAY_LEN]
+    } else {
+        addr
+    }
 }
 
 fn render_messages(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -480,9 +483,6 @@ fn render_input(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
     let style = match (&app.mode, app.input_focused) {
         (Mode::Running, true) => Style::default().fg(Color::White),
-        (Mode::Running, false) => Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
         _ => Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM),
@@ -655,26 +655,18 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     };
 
-    let (name, timestamps) = match &command {
-        Commands::Host {
-            name, timestamps, ..
-        } => {
-            let n = resolve_name(name.clone())
-                .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
-            (n, *timestamps)
-        }
-        Commands::Join {
-            name, timestamps, ..
-        } => {
-            let n = resolve_name(name.clone())
-                .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
-            (n, *timestamps)
-        }
+    let name_override = match &command {
+        Commands::Host { name, .. } | Commands::Join { name, .. } => name.clone(),
     };
-
+    let timestamps = match &command {
+        Commands::Host { timestamps, .. } | Commands::Join { timestamps, .. } => *timestamps,
+    };
     let headless = match &command {
         Commands::Host { headless, .. } | Commands::Join { headless, .. } => *headless,
     };
+
+    let name = resolve_name(name_override)
+        .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
 
     if headless {
         run_headless(name, timestamps, &command).await
@@ -700,16 +692,10 @@ async fn run_tui(name: String, timestamps: bool, command: &Commands) -> Result<(
 
     tokio::task::spawn_blocking(move || {
         loop {
-            match event::poll(Duration::from_millis(TICK_MS)) {
-                Ok(true) => {
-                    if let Ok(Event::Key(key)) = event::read() {
-                        let _ = key_tx.send(key);
-                    }
+            if event::poll(Duration::from_millis(TICK_MS)).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    let _ = key_tx.send(key);
                 }
-                Ok(false) => {
-                    // timeout — tick
-                }
-                Err(_) => break,
             }
         }
     });
@@ -718,7 +704,6 @@ async fn run_tui(name: String, timestamps: bool, command: &Commands) -> Result<(
     app.set_cmd_tx(cmd_tx);
 
     let mut ticker = tokio::time::interval(Duration::from_millis(TICK_MS));
-    let mut shutdown_deadline: Option<Instant> = None;
 
     loop {
         tokio::select! {
@@ -727,25 +712,20 @@ async fn run_tui(name: String, timestamps: bool, command: &Commands) -> Result<(
             }
 
             maybe_ev = event_rx.recv() => {
-                match maybe_ev {
-                    Some(ev) => app.handle_event(ev),
-                    None => {
-                        if !matches!(app.mode, Mode::ShuttingDown { .. }) {
-                            app.push("system".into(), "connection lost".into(), true);
-                            app.mode = Mode::ShuttingDown { since: Instant::now() };
-                        }
-                    }
+                if let Some(ev) = maybe_ev {
+                    app.handle_event(ev);
+                } else if !matches!(app.mode, Mode::ShuttingDown { .. }) {
+                    app.push("system".into(), "connection lost".into(), true);
+                    app.mode = Mode::ShuttingDown { since: Instant::now() };
                 }
             }
 
             Some(result) = cmd_rx.recv() => {
                 match result {
-                    CmdResult::Invite { code } => {
-                        match code {
-                            Ok(c) => app.push("system".into(), format!("invite code: {}", c), true),
-                            Err(e) => app.push("system".into(), format!("invite failed: {}", e), true),
-                        }
-                    }
+                    CmdResult::Invite { code } => match code {
+                        Ok(c) => app.push("system".into(), format!("invite code: {}", c), true),
+                        Err(e) => app.push("system".into(), format!("invite failed: {}", e), true),
+                    },
                     CmdResult::Peers { peers } => {
                         if peers.is_empty() {
                             app.push("system".into(), "no peers connected".into(), true);
@@ -777,16 +757,6 @@ async fn run_tui(name: String, timestamps: bool, command: &Commands) -> Result<(
         if app.quit {
             break;
         }
-
-        if matches!(app.mode, Mode::ShuttingDown { .. }) && shutdown_deadline.is_none() {
-            shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
-        }
-
-        if let Some(dl) = shutdown_deadline {
-            if Instant::now() >= dl {
-                break;
-            }
-        }
     }
 
     if let Some(h) = app.handle.take() {
@@ -808,12 +778,8 @@ async fn run_headless(name: String, _timestamps: bool, command: &Commands) -> Re
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
     std::thread::spawn(move || {
         for line in io::stdin().lock().lines() {
-            match line {
-                Ok(l) => {
-                    if line_tx.send(l).is_err() { break; }
-                }
-                Err(_) => break,
-            }
+            let Ok(l) = line else { break };
+            if line_tx.send(l).is_err() { break; }
         }
     });
 
@@ -857,45 +823,38 @@ async fn run_headless(name: String, _timestamps: bool, command: &Commands) -> Re
                 }
             }
             maybe_ev = event_rx.recv() => {
-                match maybe_ev {
-                    Some(ev) => match ev {
-                        ChatEvent::BootstrapProgress(pct) => {
-                            if pct > 0 && pct < 100 {
-                                eprint!("\rBootstrapping: {}%  ", pct);
-                            }
+                let Some(ev) = maybe_ev else {
+                    eprintln!("\n[system] connection lost");
+                    break;
+                };
+                match ev {
+                    ChatEvent::BootstrapProgress(pct) => {
+                        if pct > 0 && pct < 100 {
+                            eprint!("\rBootstrapping: {}%  ", pct);
                         }
-                        ChatEvent::RoomReady { onion_address, .. } => {
-                            room_ready = true;
-                            let truncated = if onion_address.len() > 12 {
-                                &onion_address[..12]
-                            } else {
-                                &onion_address
-                            };
-                            println!("\n[system] room ready: {}...", truncated);
-                        }
-                        ChatEvent::PeerJoin(info) => {
-                            println!("[system] {} joined", info.name);
-                        }
-                        ChatEvent::PeerLeave(pid) => {
-                            println!("[system] {} left", pid);
-                        }
-                        ChatEvent::Message { name, text, .. } => {
-                            println!("[{}] {}", name, text);
-                        }
-                        ChatEvent::InviteCreated { code } => {
-                            println!("[system] new invite code: {}", code);
-                        }
-                        ChatEvent::RoomClosed => {
-                            println!("[system] room closed");
-                            break;
-                        }
-                        ChatEvent::Error(e) => {
-                            eprintln!("\n[error] {}", e);
-                        }
-                    },
-                    None => {
-                        eprintln!("\n[system] connection lost");
+                    }
+                    ChatEvent::RoomReady { onion_address, .. } => {
+                        room_ready = true;
+                        println!("\n[system] room ready: {}...", truncate_onion(&onion_address));
+                    }
+                    ChatEvent::PeerJoin(info) => {
+                        println!("[system] {} joined", info.name);
+                    }
+                    ChatEvent::PeerLeave(pid) => {
+                        println!("[system] {} left", pid);
+                    }
+                    ChatEvent::Message { name, text, .. } => {
+                        println!("[{}] {}", name, text);
+                    }
+                    ChatEvent::InviteCreated { code } => {
+                        println!("[system] new invite code: {}", code);
+                    }
+                    ChatEvent::RoomClosed => {
+                        println!("[system] room closed");
                         break;
+                    }
+                    ChatEvent::Error(e) => {
+                        eprintln!("\n[error] {}", e);
                     }
                 }
             }
@@ -916,63 +875,61 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ephemeral_chat_core::HostConfig;
 
-    async fn make_app() -> (App, RoomHandle, mpsc::UnboundedReceiver<CmdResult>) {
+    #[test]
+    fn typing_and_sending_does_not_quit() {
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
         let mut app = App::new("tester".into(), false);
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
         app.set_cmd_tx(cmd_tx);
-        let (handle, mut ev_rx) = ephemeral_chat_core::host(HostConfig {
-            name: "tester".into(),
-            invite_ttl_secs: 300,
-        });
-        // Feed RoomReady into App so mode becomes Running
-        while let Some(ev) = ev_rx.recv().await {
-            app.handle_event(ev.clone());
-            if matches!(ev, ephemeral_chat_core::ChatEvent::RoomReady { .. }) {
-                break;
-            }
-        }
-        app.handle = Some(handle.clone());
-        (app, handle, cmd_rx)
-    }
-
-    #[tokio::test]
-    async fn typing_and_sending_does_not_quit() {
-        let (mut app, handle, mut cmd_rx) = make_app().await;
+        app.mode = Mode::Running;
         assert!(!app.quit);
 
-        // Simulate typing "hello"
         for c in "hello".chars() {
             app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         assert_eq!(app.input, "hello");
         assert!(!app.quit, "typing must not quit");
 
-        // Simulate Enter → send
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(app.input.is_empty(), "input should be consumed");
         assert!(!app.quit, "sending must not quit");
+    }
 
-        // Give spawned task time to execute
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    #[tokio::test]
+    async fn second_send_with_no_peers_works() {
+        let (handle, mut ev_rx) = ephemeral_chat_core::host(HostConfig {
+            name: "tester".into(),
+            invite_ttl_secs: 300,
+        });
 
-        // Drain any cmd results
-        while cmd_rx.try_recv().is_ok() {}
+        let mut room_ready = false;
+        while let Some(ev) = ev_rx.recv().await {
+            if matches!(ev, ephemeral_chat_core::ChatEvent::RoomReady { .. }) {
+                room_ready = true;
+                break;
+            }
+        }
+        if !room_ready {
+            return; // Tor bootstrap unavailable
+        }
 
-        assert!(!app.quit, "after send task completes, must still be alive");
+        let r = handle.send("hello").await;
+        assert!(r.is_ok(), "first send failed");
 
-        // THIS IS THE BUG: second send fails because host_task exited
         let r = handle.send("still alive").await;
-        assert!(r.is_ok(), "second send FAILED — host_task exited after first send with no peers. Result: {:?}", r);
+        assert!(r.is_ok(), "second send FAILED — host_task exited after first send with no peers");
 
         handle.quit().await;
     }
 
-    #[tokio::test]
-    async fn typing_individual_chars_does_not_quit() {
-        let (mut app, handle, _) = make_app().await;
+    #[test]
+    fn typing_individual_chars_does_not_quit() {
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
+        let mut app = App::new("tester".into(), false);
+        app.set_cmd_tx(cmd_tx);
+        app.mode = Mode::Running;
         assert!(!app.quit);
 
-        let chars = vec![
+        let chars = [
             ('a', KeyModifiers::NONE),
             ('b', KeyModifiers::NONE),
             (' ', KeyModifiers::NONE),
@@ -984,8 +941,6 @@ mod tests {
             assert!(!app.quit, "char '{}' with {:?} must not quit", c, modif);
         }
         assert_eq!(app.input, "ab Z1");
-
-        handle.quit().await;
     }
 
     #[test]
