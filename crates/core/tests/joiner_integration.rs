@@ -53,12 +53,11 @@ async fn connect_rejects_expired_invite() {
 
 #[tokio::test]
 async fn connect_rejects_invite_with_bad_onion_address() {
-    let payload = InvitePayload {
-        onion_address: "not-an-onion-address".into(),
-        nonce: [0x42u8; 16],
-        timestamp: chrono::Utc::now().timestamp() as u64,
-    };
-    let code = encode(&payload).unwrap();
+    use base58::ToBase58;
+
+    // Manually craft a token — encode() validates so we can't use it.
+    let raw = "short.onion:00000000000000000000000000000000:1700000000";
+    let code = raw.as_bytes().to_base58();
 
     let mock = MockTorConnector::new();
     let result = Joiner::connect(&mock, &code, "alice").await;

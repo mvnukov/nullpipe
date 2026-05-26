@@ -38,15 +38,22 @@
 //! ```
 
 use arti_client::DataStream;
+use base58::ToBase58;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
-use tokio::time::Duration;
+use tokio::time::{timeout, Duration};
 
-use crate::error::Result;
+use crate::error::{ChatError, Result};
 use crate::connector::TorConnector;
+use crate::invite::decode as decode_invite;
 use crate::types::{ChatEvent, PeerId};
+use crate::wire::{encode_message, WireMessage};
 
 /// How long to wait for data before considering the peer dead.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Max time for a single write operation.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Joiner state machine. Created by [`Joiner::connect`], runs via [`Joiner::run`].
 pub struct Joiner {
@@ -65,15 +72,80 @@ impl Joiner {
         invite_code: &str,
         name: &str,
     ) -> Result<Self> {
-        todo!()
+        // 1. DECODE + 2. VALIDATE (onion format, nonce, TTL=300s expiry)
+        let payload = decode_invite(invite_code, Some(300))?;
+
+        // 3. CONNECT to onion service on port 80
+        let stream = tor.connect(&payload.onion_address, 80).await?;
+
+        // 4. HANDSHAKE — exchange nonce, register name
+        let (peer_id, stream) = Self::handshake(stream, name).await?;
+
+        // 5. RETURN ready-to-run Joiner
+        Ok(Self {
+            stream: Some(stream),
+            peer_id,
+            name: name.to_string(),
+        })
     }
 
     /// Internal: wire-level handshake on a fresh stream.
     ///
     /// Called by [`Joiner::connect`]. Generates nonce+discriminator, writes 32 bytes,
     /// reads accept/reject byte, sends display name as first wire message.
-    async fn handshake(stream: DataStream, name: &str) -> Result<(PeerId, DataStream)> {
-        todo!()
+    async fn handshake<S>(stream: S, name: &str) -> Result<(PeerId, S)>
+    where
+        S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+    {
+        let nonce: [u8; 16] = rand::random();
+        let discriminator: [u8; 16] = rand::random();
+
+        // Split stream so we can read and write concurrently
+        let (mut reader, mut writer) = tokio::io::split(stream);
+
+        // Write 32-byte handshake: nonce || discriminator
+        let mut buf = [0u8; 32];
+        buf[..16].copy_from_slice(&nonce);
+        buf[16..32].copy_from_slice(&discriminator);
+
+        timeout(WRITE_TIMEOUT, writer.write_all(&buf))
+            .await
+            .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+        timeout(WRITE_TIMEOUT, writer.flush())
+            .await
+            .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
+
+        // Read accept/reject byte from hub
+        let mut response = [0u8; 1];
+        timeout(READ_TIMEOUT, reader.read_exact(&mut response))
+            .await
+            .map_err(|_| ChatError::Connection("handshake read timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake read: {e}")))?;
+
+        if response[0] != 0 {
+            return Err(ChatError::Connection("handshake rejected by hub".into()));
+        }
+
+        let peer_id = PeerId(discriminator.to_base58());
+
+        // Send display name as first wire message
+        let name_msg = WireMessage::system(name);
+        let frame = encode_message(&name_msg)?;
+        timeout(WRITE_TIMEOUT, writer.write_all(&frame))
+            .await
+            .map_err(|_| ChatError::Connection("handshake name write timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake name write: {e}")))?;
+        timeout(WRITE_TIMEOUT, writer.flush())
+            .await
+            .map_err(|_| ChatError::Connection("handshake name flush timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake name flush: {e}")))?;
+
+        // Reunite reader and writer for the caller
+        let stream = reader.unsplit(writer);
+
+        Ok((peer_id, stream))
     }
 
     /// Run the joiner main loop until the connection drops or shutdown fires.
@@ -152,7 +224,56 @@ mod tests {
         drop(make_joiner());
     }
 
-    // ── connect: invite validation (before Tor connect) ──────────────────────
+    // ── handshake: accept / reject ───────────────────────────────────────────
+
+    /// Simulates a hub that reads 32 handshake bytes, then writes the given
+    /// accept byte and (on accept) reads the name wire message.
+    async fn simulate_hub(stream: tokio::io::DuplexStream, accept_byte: u8) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut r, mut w) = tokio::io::split(stream);
+
+        // Read 32-byte handshake
+        let mut buf = [0u8; 32];
+        let n = r.read_exact(&mut buf).await.unwrap();
+        assert_eq!(n, 32);
+
+        // Write accept/reject
+        w.write_all(&[accept_byte]).await.unwrap();
+        w.flush().await.unwrap();
+
+        // On accept, read the name wire message (length prefix + payload)
+        if accept_byte == 0 {
+            let mut len_buf = [0u8; 4];
+            r.read_exact(&mut len_buf).await.unwrap();
+            let len = u32::from_be_bytes(len_buf) as usize;
+            assert!(len < 65536, "name message too large: {len}");
+            let mut payload = vec![0u8; len];
+            r.read_exact(&mut payload).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn handshake_accept_returns_peer_id() {
+        let (client, hub) = tokio::io::duplex(1024);
+
+        let hub_task = tokio::spawn(simulate_hub(hub, 0));
+        let (peer_id, _stream) = Joiner::handshake(client, "alice").await.unwrap();
+        hub_task.await.unwrap();
+
+        assert!(!peer_id.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn handshake_reject_returns_error() {
+        let (client, hub) = tokio::io::duplex(1024);
+
+        let hub_task = tokio::spawn(simulate_hub(hub, 1));
+        let result = Joiner::handshake(client, "alice").await;
+        hub_task.await.unwrap();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("rejected"));
+    }
 
     #[tokio::test]
     async fn connect_rejects_empty_invite() {
@@ -197,14 +318,12 @@ mod tests {
 
     #[tokio::test]
     async fn connect_rejects_invite_with_bad_onion_address() {
-        use crate::invite::{encode, InvitePayload};
+        use base58::ToBase58;
 
-        let payload = InvitePayload {
-            onion_address: "not-an-onion-address".into(),
-            nonce: [0x42u8; 16],
-            timestamp: chrono::Utc::now().timestamp() as u64,
-        };
-        let code = encode(&payload).unwrap();
+        // Manually craft a token — can't use encode() because it validates.
+        // Address ends with .onion but is far too short (real v3 is 56 chars).
+        let raw = "short.onion:00000000000000000000000000000000:1700000000";
+        let code = raw.as_bytes().to_base58();
 
         let mock = MockTorConnector::new();
         let result = Joiner::connect(&mock, &code, "alice").await;

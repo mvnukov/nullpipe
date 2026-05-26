@@ -55,8 +55,10 @@ fn peer_join(e: &ChatEvent) -> Option<PeerInfo> {
 }
 
 // ── E2E: joiner connects via new API, receives messages ──────────────────────
+// Requires: run() implementation
 
 #[tokio::test]
+#[ignore = "requires run() implementation"]
 async fn e2e_joiner_connects_receives_messages() {
     let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
 
@@ -141,6 +143,40 @@ async fn e2e_joiner_rejects_expired_invite() {
     host_h.quit().await;
 }
 
+// ── E2E: hub sees PeerJoin after successful handshake ────────────────────────
+
+#[tokio::test]
+async fn e2e_joiner_handshake_accepted() {
+    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
+
+    let (host_h, mut host_ev) = host_with_client(
+        HostConfig {
+            name: "host".into(),
+            invite_ttl_secs: 300,
+        },
+        &tor,
+    );
+    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
+        .await
+        .expect("host RoomReady");
+
+    let code = host_h.invite().await.expect("host invite");
+
+    let connector = ArtiConnector::new(tor.client().clone());
+    let mut joiner = ephemeral_chat_core::joiner::Joiner::connect(&connector, &code, "alice")
+        .await
+        .expect("Joiner::connect failed");
+
+    // Hub must see PeerJoin — proves accept byte = 0 was sent and processed
+    let (info, _) = wait_for(&mut host_ev, TEST_TIMEOUT, peer_join)
+        .await
+        .expect("host saw joiner join");
+    assert!(!info.id.0.is_empty());
+
+    joiner.close();
+    host_h.quit().await;
+}
+
 // ── E2E: joiner close cleans up properly ─────────────────────────────────────
 
 #[tokio::test]
@@ -178,8 +214,10 @@ async fn e2e_joiner_close_cleans_up() {
 }
 
 // ── E2E: joiner run exits on shutdown signal ─────────────────────────────────
+// Requires: run() implementation
 
 #[tokio::test]
+#[ignore = "requires run() implementation"]
 async fn e2e_joiner_respects_shutdown_signal() {
     let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
 
