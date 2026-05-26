@@ -276,9 +276,9 @@ fn cli_version_flag() {
 
 #[test]
 fn cli_host_send_message_no_peers_stays_alive() {
-    // Spawn host, wait for bootstrap, send a message via stdin,
+    // Spawn host in headless mode, wait for bootstrap, send a message via stdin,
     // verify process doesn't exit/crash.
-    let mut child = spawn_chat(&["host"]);
+    let mut child = spawn_chat(&["host", "--headless", "--name", "test"]);
 
     // Wait for Tor bootstrap (~15-30s first run, faster on cache)
     std::thread::sleep(std::time::Duration::from_secs(20));

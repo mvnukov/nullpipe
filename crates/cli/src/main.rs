@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -517,6 +517,25 @@ fn install_panic_hook() {
     }));
 }
 
+fn create_room(name: &str, command: &Commands) -> (RoomHandle, mpsc::Receiver<ChatEvent>) {
+    match command {
+        Commands::Host { invite_ttl, .. } => {
+            let config = HostConfig {
+                name: name.into(),
+                invite_ttl_secs: *invite_ttl,
+            };
+            host(config)
+        }
+        Commands::Join { invite_code, .. } => {
+            let config = JoinConfig {
+                name: name.into(),
+                invite_code: invite_code.clone(),
+            };
+            join(config)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Name resolution (same as before)
 // ---------------------------------------------------------------------------
@@ -597,6 +616,10 @@ enum Commands {
 
         #[arg(long, default_value_t = false)]
         timestamps: bool,
+
+        /// Run without TUI, reading input from stdin
+        #[arg(long, default_value_t = false)]
+        headless: bool,
     },
     /// Join an existing chat room
     Join {
@@ -607,6 +630,10 @@ enum Commands {
 
         #[arg(long, default_value_t = false)]
         timestamps: bool,
+
+        /// Run without TUI, reading input from stdin
+        #[arg(long, default_value_t = false)]
+        headless: bool,
     },
 }
 
@@ -645,36 +672,32 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Setup terminal
+    let headless = match &command {
+        Commands::Host { headless, .. } | Commands::Join { headless, .. } => *headless,
+    };
+
+    if headless {
+        run_headless(name, timestamps, &command).await
+    } else {
+        run_tui(name, timestamps, &command).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TUI mode
+// ---------------------------------------------------------------------------
+
+async fn run_tui(name: String, timestamps: bool, command: &Commands) -> Result<()> {
     install_panic_hook();
     let mut terminal = setup_terminal()?;
 
-    // Start room
-    let (handle, mut event_rx) = match &command {
-        Commands::Host { invite_ttl, .. } => {
-            let config = HostConfig {
-                name: name.clone(),
-                invite_ttl_secs: *invite_ttl,
-            };
-            host(config)
-        }
-        Commands::Join { invite_code, .. } => {
-            let config = JoinConfig {
-                name: name.clone(),
-                invite_code: invite_code.clone(),
-            };
-            join(config)
-        }
-    };
+    let (handle, mut event_rx) = create_room(&name, command);
 
-    // App state
     let mut app = App::new(name, timestamps);
     app.handle = Some(handle);
 
-    // Input channel from spawn_blocking task
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyEvent>();
 
-    // Spawn input polling on a blocking thread
     tokio::task::spawn_blocking(move || {
         loop {
             match event::poll(Duration::from_millis(TICK_MS)) {
@@ -691,30 +714,22 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Command result channel (for async /invite, /peers, /quit)
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<CmdResult>();
     app.set_cmd_tx(cmd_tx);
 
-    // Tick timer for spinner animation during bootstrap
     let mut ticker = tokio::time::interval(Duration::from_millis(TICK_MS));
-
-    // Shutdown deadline
     let mut shutdown_deadline: Option<Instant> = None;
 
-    // Main loop
     loop {
         tokio::select! {
-            // Key input
             Some(key) = key_rx.recv() => {
                 app.handle_key(key);
             }
 
-            // Chat events
             maybe_ev = event_rx.recv() => {
                 match maybe_ev {
                     Some(ev) => app.handle_event(ev),
                     None => {
-                        // Event stream ended — room shut down
                         if !matches!(app.mode, Mode::ShuttingDown { .. }) {
                             app.push("system".into(), "connection lost".into(), true);
                             app.mode = Mode::ShuttingDown { since: Instant::now() };
@@ -723,7 +738,6 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Command results (async /invite, /peers, /quit)
             Some(result) = cmd_rx.recv() => {
                 match result {
                     CmdResult::Invite { code } => {
@@ -746,34 +760,28 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Timer tick (for spinner redraw)
             _ = ticker.tick() => {}
         }
 
-        // Check shutdown deadline (5 seconds max)
         if let Mode::ShuttingDown { since } = app.mode {
             if since.elapsed() > Duration::from_secs(5) {
                 app.quit = true;
             }
         }
 
-        // Draw
         if let Err(e) = terminal.draw(|f| render(f, &app)) {
             eprintln!("render error: {e}");
             app.quit = true;
         }
 
-        // Check quit
         if app.quit {
             break;
         }
 
-        // Auto-set shutdown deadline when entering ShuttingDown
         if matches!(app.mode, Mode::ShuttingDown { .. }) && shutdown_deadline.is_none() {
             shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
         }
 
-        // Force quit after deadline
         if let Some(dl) = shutdown_deadline {
             if Instant::now() >= dl {
                 break;
@@ -781,14 +789,120 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Graceful shutdown
     if let Some(h) = app.handle.take() {
         let _ = tokio::time::timeout(Duration::from_secs(2), async { h.quit().await }).await;
     }
 
-    // Restore terminal
     restore_terminal();
+    Ok(())
+}
 
+// ---------------------------------------------------------------------------
+// Headless mode (stdin/stdout text interface)
+// ---------------------------------------------------------------------------
+
+async fn run_headless(name: String, _timestamps: bool, command: &Commands) -> Result<()> {
+    let (handle, mut event_rx) = create_room(&name, command);
+    let mut room_ready = false;
+
+    let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
+    std::thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            match line {
+                Ok(l) => {
+                    if line_tx.send(l).is_err() { break; }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    loop {
+        tokio::select! {
+            Some(line) = line_rx.recv() => {
+                let line = line.trim().to_string();
+                if line.is_empty() { continue; }
+                if line == "/quit" { break; }
+
+                if let Some(cmd) = line.strip_prefix('/') {
+                    let h = handle.clone();
+                    match cmd {
+                        "invite" => {
+                            tokio::spawn(async move {
+                                match h.invite().await {
+                                    Ok(c) => println!("[system] invite code: {}", c),
+                                    Err(e) => eprintln!("[error] invite failed: {}", e),
+                                }
+                            });
+                        }
+                        "peers" => {
+                            let h = handle.clone();
+                            tokio::spawn(async move {
+                                let peers = h.peers().await;
+                                if peers.is_empty() {
+                                    println!("[system] no peers");
+                                } else {
+                                    let names: Vec<_> = peers.iter().map(|p| p.name.as_str()).collect();
+                                    println!("[system] peers: {}", names.join(", "));
+                                }
+                            });
+                        }
+                        _ => println!("[system] unknown command: /{}", cmd),
+                    }
+                } else if room_ready {
+                    let h = handle.clone();
+                    tokio::spawn(async move {
+                        let _ = h.send(&line).await;
+                    });
+                }
+            }
+            maybe_ev = event_rx.recv() => {
+                match maybe_ev {
+                    Some(ev) => match ev {
+                        ChatEvent::BootstrapProgress(pct) => {
+                            if pct > 0 && pct < 100 {
+                                eprint!("\rBootstrapping: {}%  ", pct);
+                            }
+                        }
+                        ChatEvent::RoomReady { onion_address, .. } => {
+                            room_ready = true;
+                            let truncated = if onion_address.len() > 12 {
+                                &onion_address[..12]
+                            } else {
+                                &onion_address
+                            };
+                            println!("\n[system] room ready: {}...", truncated);
+                        }
+                        ChatEvent::PeerJoin(info) => {
+                            println!("[system] {} joined", info.name);
+                        }
+                        ChatEvent::PeerLeave(pid) => {
+                            println!("[system] {} left", pid);
+                        }
+                        ChatEvent::Message { name, text, .. } => {
+                            println!("[{}] {}", name, text);
+                        }
+                        ChatEvent::InviteCreated { code } => {
+                            println!("[system] new invite code: {}", code);
+                        }
+                        ChatEvent::RoomClosed => {
+                            println!("[system] room closed");
+                            break;
+                        }
+                        ChatEvent::Error(e) => {
+                            eprintln!("\n[error] {}", e);
+                        }
+                    },
+                    None => {
+                        eprintln!("\n[system] connection lost");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = tokio::time::timeout(Duration::from_secs(2), async { handle.quit().await }).await;
     Ok(())
 }
 

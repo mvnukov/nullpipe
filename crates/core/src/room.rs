@@ -94,6 +94,9 @@ impl RoomHandle {
     ///
     /// Only available on hub rooms. Returns an error when called by a joiner.
     pub async fn invite(&self) -> Result<String> {
+        if self.inner.quit_flag.load(Ordering::SeqCst) {
+            return Err(ChatError::ShuttingDown);
+        }
         let guard = self
             .inner
             .invite
