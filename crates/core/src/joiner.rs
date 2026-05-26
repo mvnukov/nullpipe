@@ -3,15 +3,38 @@
 //! Pre-condition: Tor is already bootstrapped.
 //!
 //! ```text
-//! JOIN(connector, invite_code, name)
+//! CALLER:
+//!     joiner = Joiner::connect(connector, invite_code, name)   // phases 1+2
+//!     joiner.run(msg_rx, event_tx, shutdown_rx)                // phase 3
+//!     joiner.close()                                            // phase 4
 //!
-//! 1. CONNECT      — decode invite, validate expiry, connect to onion
-//! 2. HANDSHAKE    — exchange nonce, get accepted, register name
-//! 3. RUN          — concurrently:
-//!                   • read messages from hub → emit events
-//!                   • send typed messages → write to hub
-//!                   • detect dead connection (read timeout)
-//! 4. CLEANUP      — close connection
+//! ── Joiner::connect(connector, invite_code, name) ──────────────────────────
+//!
+//!   1. DECODE     base58 decode invite_code → (onion_address, nonce, timestamp)
+//!   2. VALIDATE   onion format, nonce 16 bytes, expiry (TTL=300s)
+//!   3. CONNECT    connector.connect(onion_address, 80) → DataStream
+//!   4. HANDSHAKE  Self::handshake(stream, name) → (PeerId, DataStream)
+//!                     generate nonce[16] + discriminator[16]
+//!                     write 32 bytes
+//!                     read 1 byte (accept=0 / reject≠0)
+//!                     send name as first wire message
+//!   5. RETURN     Joiner { stream, peer_id, name }
+//!
+//! ── joiner.run(msg_rx, event_tx, shutdown_rx) ─────────────────────────────
+//!
+//!   1. SPLIT      stream.split() → (reader, writer)
+//!   2. SPAWN      reader task: read_frame → decode_message → event_tx.send(event)
+//!   3. LOOP       tokio::select! {
+//!                     shutdown signalled     → break Ok(())
+//!                     reader done            → break Ok(())
+//!                     msg from msg_rx        → encode → write_all → flush
+//!                     msg_rx closed          → break Ok(())
+//!                 }
+//!   4. ABORT      kill reader task, await it
+//!
+//! ── joiner.close() ─────────────────────────────────────────────────────────
+//!
+//!   1. CLOSE      stream = None  (idempotent, DataStream drops → closes Tor)
 //! ```
 
 use arti_client::DataStream;
@@ -45,10 +68,10 @@ impl Joiner {
         todo!()
     }
 
-    /// Perform the wire-level handshake on a fresh stream.
+    /// Internal: wire-level handshake on a fresh stream.
     ///
-    /// Writes a 32-byte nonce+discriminator, reads a 1-byte accept/reject,
-    /// then sends the display name as the first wire message.
+    /// Called by [`Joiner::connect`]. Generates nonce+discriminator, writes 32 bytes,
+    /// reads accept/reject byte, sends display name as first wire message.
     async fn handshake(stream: DataStream, name: &str) -> Result<(PeerId, DataStream)> {
         todo!()
     }
