@@ -1,321 +1,472 @@
 //! Joiner — connects to a hosted onion service via Tor.
+//!
+//! Pre-condition: Tor is already bootstrapped.
+//!
+//! ```text
+//! JOIN(connector, invite_code, name)
+//!
+//! 1. CONNECT      — decode invite, validate expiry, connect to onion
+//! 2. HANDSHAKE    — exchange nonce, get accepted, register name
+//! 3. RUN          — concurrently:
+//!                   • read messages from hub → emit events
+//!                   • send typed messages → write to hub
+//!                   • detect dead connection (read timeout)
+//! 4. CLEANUP      — close connection
+//! ```
 
-use arti_client::{DataStream, TorClient};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
-use tor_rtcompat::PreferredRuntime;
-use tracing::{info, warn};
+use arti_client::DataStream;
+use tokio::sync::{mpsc, watch};
+use tokio::time::Duration;
 
-use crate::error::{ChatError, Result};
-use crate::invite::decode as decode_invite;
+use crate::error::Result;
+use crate::connector::TorConnector;
 use crate::types::{ChatEvent, PeerId};
-use crate::wire::{encode_message, read_message, WireMessage};
 
-/// Default connection timeout for joiner (30 seconds).
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Read timeout for detecting dead connections.
+/// How long to wait for data before considering the peer dead.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Write timeout for avoiding blocked writes.
-const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Maximum number of connection retry attempts for transient Tor failures.
-const MAX_CONNECT_RETRIES: u32 = 3;
-
-/// Base delay between connection retries (doubles each attempt).
-const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
-
-/// A joiner that connects to a hosted onion service via Tor.
-///
-/// After connecting, the joiner holds a write half of the stream for sending
-/// messages and runs a background reader task that pushes events through
-/// an internal channel, consumed via [`Joiner::recv`].
+/// Joiner state machine. Created by [`Joiner::connect`], runs via [`Joiner::run`].
 pub struct Joiner {
-    /// Write half of the Tor stream (owned directly for synchronous access).
-    writer: Option<tokio::io::WriteHalf<DataStream>>,
-    connected: bool,
-    peer_id: Option<PeerId>,
-    name: Option<String>,
-    /// Channel from the reader task to the recv stream.
-    event_rx: mpsc::Receiver<Result<ChatEvent>>,
-}
-
-/// Retry a fallible async operation on transient failures until `timeout_dur` elapses
-/// or all retries are exhausted.
-async fn retry_transient<F, Fut, T>(
-    timeout_dur: Duration,
-    max_retries: u32,
-    base_delay: Duration,
-    mut operation: F,
-) -> Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
-{
-    let deadline = tokio::time::Instant::now() + timeout_dur;
-    let mut last_err = None;
-
-    for attempt in 0..max_retries {
-        if tokio::time::Instant::now() >= deadline {
-            break;
-        }
-
-        let remaining = deadline - tokio::time::Instant::now();
-        match timeout(remaining, operation()).await {
-            Ok(Ok(value)) => return Ok(value),
-            Ok(Err(e)) => {
-                let is_transient = format!("{e}").contains("transient")
-                    || format!("{e}").contains("timed out")
-                    || format!("{e}").contains("timeout");
-                last_err = Some(e);
-                if !is_transient || attempt == max_retries - 1 {
-                    break;
-                }
-                let delay = base_delay.saturating_mul(2u32.pow(attempt));
-                let delay = delay.min(remaining / 2);
-                info!("attempt {}/{} failed (transient), retrying in {:?}", attempt + 1, max_retries, delay);
-                tokio::time::sleep(delay).await;
-            }
-            Err(_) => {
-                return Err(ChatError::Connection("operation timed out".into()));
-            }
-        }
-    }
-
-    Err(ChatError::Connection(format!(
-        "operation failed: {}",
-        last_err.map_or("timed out".to_string(), |e| format!("{e}"))
-    )))
+    pub(crate) stream: Option<DataStream>,
+    pub(crate) peer_id: PeerId,
+    pub(crate) name: String,
 }
 
 impl Joiner {
     /// Connect to a hosted room using an invite code.
+    ///
+    /// Decodes the invite, validates it is not expired, connects through Tor,
+    /// then performs the handshake. Returns a ready-to-run Joiner.
     pub async fn connect(
-        tor_client: &TorClient<PreferredRuntime>,
+        tor: &impl TorConnector,
         invite_code: &str,
+        name: &str,
     ) -> Result<Self> {
-        Self::connect_with_timeout(tor_client, invite_code, DEFAULT_CONNECT_TIMEOUT).await
+        todo!()
     }
 
-    /// Connect to a hosted room using an invite code with a custom timeout.
-    pub async fn connect_with_timeout(
-        tor_client: &TorClient<PreferredRuntime>,
-        invite_code: &str,
-        timeout_dur: Duration,
-    ) -> Result<Self> {
-        let payload = decode_invite(invite_code, None)?;
-
-        info!("connecting to onion service: {}", payload.onion_address);
-
-        let target = (payload.onion_address.as_str(), 80);
-        retry_transient(timeout_dur, MAX_CONNECT_RETRIES, RETRY_BASE_DELAY, || async {
-            let stream = tor_client.connect(target).await
-                .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
-            info!("connected to onion service, starting handshake");
-            Self::from_stream(stream).await
-        }).await
+    /// Perform the wire-level handshake on a fresh stream.
+    ///
+    /// Writes a 32-byte nonce+discriminator, reads a 1-byte accept/reject,
+    /// then sends the display name as the first wire message.
+    async fn handshake(stream: DataStream, name: &str) -> Result<(PeerId, DataStream)> {
+        todo!()
     }
 
-    /// Connect to a specific onion address and port.
-    pub async fn connect_to(
-        tor_client: &TorClient<PreferredRuntime>,
-        onion_address: &str,
-        port: u16,
-    ) -> Result<Self> {
-        Self::connect_to_with_timeout(tor_client, onion_address, port, DEFAULT_CONNECT_TIMEOUT)
-            .await
+    /// Run the joiner main loop until the connection drops or shutdown fires.
+    ///
+    /// Spawns a background reader task that reads wire frames from the hub
+    /// and pushes `ChatEvent`s through `events`. The writer loop consumes
+    /// messages from `messages` and writes them to the stream.
+    ///
+    /// Returns when:
+    /// - The hub disconnects (read error or timeout)
+    /// - `shutdown` is signalled
+    /// - The event channel receiver is dropped
+    pub async fn run(
+        &mut self,
+        messages: mpsc::Receiver<String>,
+        events: mpsc::Sender<ChatEvent>,
+        shutdown: watch::Receiver<()>,
+    ) -> Result<()> {
+        todo!()
     }
 
-    /// Connect to a specific onion address and port with a custom timeout.
-    pub async fn connect_to_with_timeout(
-        tor_client: &TorClient<PreferredRuntime>,
-        onion_address: &str,
-        port: u16,
-        timeout_dur: Duration,
-    ) -> Result<Self> {
-        let target = (onion_address, port);
-        retry_transient(timeout_dur, MAX_CONNECT_RETRIES, RETRY_BASE_DELAY, || async {
-            let stream = tor_client.connect(target).await
-                .map_err(|e| ChatError::Connection(format!("onion connect failed: {e}")))?;
-            info!("connected to {onion_address}:{port}, starting handshake");
-            Self::from_stream(stream).await
-        }).await
+    /// Close the connection. Idempotent.
+    pub fn close(&mut self) {
+        self.stream = None;
     }
 
-    /// Build a Joiner from an established stream: handshake, split, spawn reader.
-    async fn from_stream(stream: DataStream) -> Result<Self> {
-        use base58::ToBase58;
-
-        // -- handshake --
-        let nonce: [u8; 16] = rand::random();
-        let discriminator: [u8; 16] = rand::random();
-
-        let mut buf = [0u8; 32];
-        buf[..16].copy_from_slice(&nonce);
-        buf[16..32].copy_from_slice(&discriminator);
-
-        let mut s = stream;
-        timeout(WRITE_TIMEOUT, s.write_all(&buf))
-            .await
-            .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
-            .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
-
-        let mut response = [0u8; 1];
-        timeout(READ_TIMEOUT, s.read_exact(&mut response))
-            .await
-            .map_err(|_| ChatError::Connection("handshake read timed out".into()))?
-            .map_err(|e| ChatError::Connection(format!("handshake read: {e}")))?;
-
-        if response[0] != 0 {
-            return Err(ChatError::Connection("handshake rejected by hub".into()));
+    /// Test constructor. Not for production use.
+    pub fn new_for_test(peer_id: PeerId, name: String) -> Self {
+        Self {
+            stream: None,
+            peer_id,
+            name,
         }
-
-        let peer_id = PeerId(discriminator.to_base58());
-        let name = format!("peer-{}", hex::encode(&discriminator[..4]));
-
-        // -- split stream --
-        let (reader, writer) = tokio::io::split(s);
-
-        // -- event channel --
-        let (event_tx, event_rx) = mpsc::channel::<Result<ChatEvent>>(256);
-
-        // -- spawn reader task --
-        tokio::spawn(Self::reader_task(reader, event_tx));
-
-        Ok(Self {
-            writer: Some(writer),
-            connected: true,
-            peer_id: Some(peer_id),
-            name: Some(name),
-            event_rx,
-        })
-    }
-
-    /// Send a chat message to the hub.
-    ///
-    /// Encodes the text as a length-prefixed `Chat` wire message and writes
-    /// it to the Tor stream. Returns an error if the connection is closed
-    /// or the write times out.
-    pub async fn send(&mut self, text: &str) -> Result<()> {
-        let writer = self
-            .writer
-            .as_mut()
-            .ok_or_else(|| ChatError::Connection("not connected".into()))?;
-
-        let msg = WireMessage::chat(self.name.as_deref().unwrap_or(""), text);
-        let frame = encode_message(&msg)?;
-
-        timeout(WRITE_TIMEOUT, writer.write_all(&frame))
-            .await
-            .map_err(|_| ChatError::Connection("write timed out".into()))?
-            .map_err(|e| ChatError::Connection(format!("write failed: {e}")))?;
-
-        Ok(())
-    }
-
-    /// Receive incoming chat events from the hub.
-    ///
-    /// Returns a [`Stream`] that yields `Result<ChatEvent>`. The stream
-    /// ends when the connection is closed or an error occurs.
-    pub fn recv(&mut self) -> tokio_stream::wrappers::ReceiverStream<Result<ChatEvent>> {
-        // We need to move the receiver out temporarily. We put back an
-        // empty receiver so the struct remains valid.
-        let rx = std::mem::replace(
-            &mut self.event_rx,
-            mpsc::channel(1).1, // dummy
-        );
-        tokio_stream::wrappers::ReceiverStream::new(rx)
-    }
-
-    /// Shutdown the connection. Idempotent.
-    pub fn shutdown(&mut self) {
-        self.writer = None;
-        self.connected = false;
-    }
-
-    /// Whether the joiner is connected.
-    pub fn is_connected(&self) -> bool {
-        self.connected
-    }
-
-    /// Our peer ID assigned during handshake.
-    pub fn peer_id(&self) -> Option<&PeerId> {
-        self.peer_id.as_ref()
-    }
-
-    /// Our human-friendly name assigned during handshake.
-    pub fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    /// Reader task: runs in the background, reads wire messages from the
-    /// Tor stream and pushes them as `ChatEvent`s to the event channel.
-    ///
-    /// Handles:
-    /// - Partial reads (read_message retries until complete frame)
-    /// - Connection drops (error → send error → break)
-    /// - Read timeout (dead peer detection)
-    /// - Ping messages (responds with pong, if possible)
-    async fn reader_task(
-        mut reader: impl AsyncReadExt + Unpin + Send + 'static,
-        event_tx: mpsc::Sender<Result<ChatEvent>>,
-    ) {
-        loop {
-            match timeout(READ_TIMEOUT, read_message(&mut reader)).await {
-                Ok(Ok(msg)) => {
-                    // Auto-respond to pings
-                    if msg.kind == crate::wire::MessageType::Ping {
-                        if let Ok(pong_frame) = encode_message(&WireMessage::pong()) {
-                            // Can't write pong without writer half; drop it.
-                            // The hub uses a separate writer task for pings.
-                            let _ = pong_frame;
-                        }
-                        continue;
-                    }
-
-                    // Convert wire message to ChatEvent
-                    let event = match msg.kind {
-                        crate::wire::MessageType::Chat | crate::wire::MessageType::System => {
-                            ChatEvent::Message {
-                                from: PeerId(msg.name.clone()),
-                                name: msg.name,
-                                text: msg.text,
-                            }
-                        }
-                        crate::wire::MessageType::Pong => {
-                            continue;
-                        }
-                        crate::wire::MessageType::Ping => unreachable!("handled above"),
-                    };
-
-                    if event_tx.send(Ok(event)).await.is_err() {
-                        info!("joiner: event channel closed, stopping reader");
-                        break;
-                    }
-                }
-                Ok(Err(e)) => {
-                    let _ = event_tx.send(Err(e)).await;
-                    break;
-                }
-                Err(_) => {
-                    warn!("joiner: read timeout, connection dead");
-                    let _ = event_tx
-                        .send(Err(ChatError::Connection(
-                            "read timeout, peer disconnected".into(),
-                        )))
-                        .await;
-                    break;
-                }
-            }
-        }
-        info!("joiner: reader task ended");
     }
 }
 
 impl Drop for Joiner {
     fn drop(&mut self) {
-        self.shutdown();
+        self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connector::mock::MockTorConnector;
+
+    fn make_joiner() -> Joiner {
+        Joiner {
+            stream: None,
+            peer_id: PeerId("test".into()),
+            name: "test".into(),
+        }
+    }
+
+    async fn drain(rx: &mut mpsc::Receiver<ChatEvent>) -> Vec<ChatEvent> {
+        let mut events = Vec::new();
+        while let Ok(Some(e)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
+            events.push(e);
+        }
+        events
+    }
+
+    // ── close / drop ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn close_is_idempotent() {
+        let mut j = make_joiner();
+        j.close();
+        j.close();
+        assert!(j.stream.is_none());
+    }
+
+    #[test]
+    fn drop_calls_close() {
+        drop(make_joiner());
+    }
+
+    // ── connect: invite validation (before Tor connect) ──────────────────────
+
+    #[tokio::test]
+    async fn connect_rejects_empty_invite() {
+        let mock = MockTorConnector::new();
+        let result = Joiner::connect(&mock, "", "alice").await;
+        assert!(result.is_err());
+        assert_eq!(mock.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_garbage_invite() {
+        let mock = MockTorConnector::new();
+        let result = Joiner::connect(&mock, "!!!not-base58!!!", "alice").await;
+        assert!(result.is_err());
+        assert_eq!(mock.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_truncated_invite() {
+        let mock = MockTorConnector::new();
+        let result = Joiner::connect(&mock, "abc", "alice").await;
+        assert!(result.is_err());
+        assert_eq!(mock.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_expired_invite() {
+        use crate::invite::{encode, InvitePayload};
+
+        let payload = InvitePayload {
+            onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
+            nonce: [0x42u8; 16],
+            timestamp: 1_700_000_000,
+        };
+        let code = encode(&payload).unwrap();
+
+        let mock = MockTorConnector::new();
+        let result = Joiner::connect(&mock, &code, "alice").await;
+        assert!(result.is_err());
+        assert_eq!(mock.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_invite_with_bad_onion_address() {
+        use crate::invite::{encode, InvitePayload};
+
+        let payload = InvitePayload {
+            onion_address: "not-an-onion-address".into(),
+            nonce: [0x42u8; 16],
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+        let code = encode(&payload).unwrap();
+
+        let mock = MockTorConnector::new();
+        let result = Joiner::connect(&mock, &code, "alice").await;
+        assert!(result.is_err());
+        assert_eq!(mock.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connect_calls_tor_with_correct_target() {
+        use crate::invite::{encode, InvitePayload};
+
+        let payload = InvitePayload {
+            onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
+            nonce: [0xABu8; 16],
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+        let code = encode(&payload).unwrap();
+
+        let mock = MockTorConnector::new();
+        let _ = Joiner::connect(&mock, &code, "alice").await;
+        assert_eq!(mock.call_count(), 1);
+        let (addr, port) = mock.last_target().unwrap();
+        assert_eq!(addr, "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion");
+        assert_eq!(port, 80);
+    }
+
+    #[tokio::test]
+    async fn connect_propagates_tor_error() {
+        use crate::invite::{encode, InvitePayload};
+
+        let payload = InvitePayload {
+            onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
+            nonce: [0xABu8; 16],
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        };
+        let code = encode(&payload).unwrap();
+
+        let mock = MockTorConnector::with_connect_result(Err(
+            crate::error::ChatError::Connection("network down".into())
+        ));
+        let result = Joiner::connect(&mock, &code, "alice").await;
+        assert!(result.is_err());
+    }
+
+    // ── run: shutdown signal ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_exits_on_immediate_shutdown() {
+        let (_msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+        sd_tx.send(()).unwrap();
+
+        let mut j = make_joiner();
+        let result = j.run(msg_rx, evt_tx, sd_rx).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_exits_on_shutdown_after_delay() {
+        let (_msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            sd_tx.send(()).unwrap();
+        });
+
+        let result = j.run(msg_rx, evt_tx, sd_rx).await;
+        handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    // ── run: message channel closed ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_exits_when_message_channel_closes() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (_sd_tx, sd_rx) = watch::channel(());
+
+        drop(msg_tx);
+
+        let mut j = make_joiner();
+        let result = j.run(msg_rx, evt_tx, sd_rx).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_exits_when_event_receiver_dropped() {
+        let (_msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (_sd_tx, sd_rx) = watch::channel(());
+
+        drop(evt_rx);
+
+        let mut j = make_joiner();
+        let result = j.run(msg_rx, evt_tx, sd_rx).await;
+        assert!(result.is_err());
+    }
+
+    // ── run: send + receive ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_forwards_messages_to_events() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("hello".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let events = drain(&mut evt_rx).await;
+        assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "hello")));
+    }
+
+    #[tokio::test]
+    async fn run_forwards_multiple_messages_in_order() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("first".to_string()).await.unwrap();
+        msg_tx.send("second".to_string()).await.unwrap();
+        msg_tx.send("third".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let texts: Vec<_> = drain(&mut evt_rx).await
+            .into_iter()
+            .filter_map(|e| match e {
+                ChatEvent::Message { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["first", "second", "third"]);
+    }
+
+    #[tokio::test]
+    async fn run_handles_empty_message() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let events = drain(&mut evt_rx).await;
+        assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text.is_empty())));
+    }
+
+    #[tokio::test]
+    async fn run_handles_unicode_message() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("你好 🌍".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let events = drain(&mut evt_rx).await;
+        assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "你好 🌍")));
+    }
+
+    #[tokio::test]
+    async fn run_handles_long_message() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        let long = "x".repeat(8192);
+        msg_tx.send(long).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let events = drain(&mut evt_rx).await;
+        assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text.len() == 8192)));
+    }
+
+    // ── run: concurrent send and shutdown ────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_shutdown_while_message_in_flight() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("in-flight".to_string()).await.unwrap();
+        sd_tx.send(()).unwrap();
+
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_rapid_message_then_shutdown() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = make_joiner();
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        for i in 0..50 {
+            msg_tx.send(format!("msg-{i}")).await.unwrap();
+        }
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let count = drain(&mut evt_rx).await
+            .into_iter()
+            .filter(|e| matches!(e, ChatEvent::Message { .. }))
+            .count();
+        assert_eq!(count, 50);
+    }
+
+    // ── run: peer_id and name in emitted events ──────────────────────────────
+
+    #[tokio::test]
+    async fn run_emits_correct_peer_name() {
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (sd_tx, sd_rx) = watch::channel(());
+
+        let mut j = Joiner {
+            stream: None,
+            peer_id: PeerId("peer-abc".into()),
+            name: "alice".into(),
+        };
+        let handle = tokio::spawn(async move {
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        msg_tx.send("hi".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sd_tx.send(()).unwrap();
+        handle.await.unwrap().unwrap();
+
+        let events = drain(&mut evt_rx).await;
+        let msg_event = events.iter().find(|e| matches!(e, ChatEvent::Message { .. }));
+        assert!(msg_event.is_some());
+        if let Some(ChatEvent::Message { name, .. }) = msg_event {
+            assert_eq!(name, "alice");
+        }
     }
 }

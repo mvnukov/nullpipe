@@ -10,10 +10,12 @@ use std::time::Duration;
 use ephemeral_chat_core::bootstrap::TorBootstrap;
 use ephemeral_chat_core::error::ChatError;
 use ephemeral_chat_core::hub::HostedRoom;
+use ephemeral_chat_core::connector::ArtiConnector;
 use ephemeral_chat_core::invite::{encode, InvitePayload};
 use ephemeral_chat_core::joiner::Joiner;
 use ephemeral_chat_core::types::ChatEvent;
 use futures::StreamExt;
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 /// Helper: bootstrap a Tor client and return the bootstrapped instance.
@@ -149,39 +151,46 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
     };
     let invite_code = encode(&invite_payload).expect("encode invite");
 
-    // Joiner connects and uses send/recv API
+    // Joiner connects using the new API
     let client_joiner = bootstrap.client().expect("client ref").clone();
+    let connector = ArtiConnector::new(client_joiner);
     let invite_code_clone = invite_code.clone();
     let joiner_handle = tokio::spawn(async move {
-        let mut joiner = Joiner::connect_with_timeout(
-            &client_joiner,
+        let mut joiner = Joiner::connect(
+            &connector,
             &invite_code_clone,
-            Duration::from_secs(90),
+            "joiner",
         )
         .await
         .expect("Joiner::connect failed");
 
-        // Send a chat message to the hub
-        joiner
-            .send("hello from joiner")
-            .await
-            .expect("joiner send failed");
+        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(256);
+        let (_sd_tx, sd_rx) = watch::channel(());
 
-        // Read response from hub via recv stream
-        let mut recv_stream = joiner.recv();
+        // Run joiner in background
+        let run_handle = tokio::spawn(async move {
+            let mut j = joiner;
+            j.run(msg_rx, evt_tx, sd_rx).await
+        });
+
+        // Send a chat message
+        msg_tx.send("hello from joiner".to_string()).await.expect("send failed");
+
+        // Read response from hub via events
         let mut response_text = String::new();
-        while let Some(result) = timeout(Duration::from_secs(30), recv_stream.next())
+        while let Some(event) = timeout(Duration::from_secs(30), evt_rx.recv())
             .await
             .ok()
             .flatten()
         {
-            if let Ok(ChatEvent::Message { text, .. }) = result {
+            if let ChatEvent::Message { text, .. } = event {
                 response_text = text;
                 break;
             }
         }
 
-        joiner.shutdown();
+        run_handle.abort();
         response_text
     });
 
@@ -223,20 +232,23 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
 async fn e2e_joiner_timeout_on_bad_address() {
     let (mut bootstrap, _) = bootstrap_tor().await;
     let client = bootstrap.client().expect("client should be available");
+    let connector = ArtiConnector::new(client.clone());
 
-    // Try to connect to a non-existent onion address with a short timeout
+    // Create a valid-looking invite pointing to a non-existent onion
+    let payload = InvitePayload {
+        onion_address: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion".into(),
+        nonce: [0x42u8; 16],
+        timestamp: chrono::Utc::now().timestamp() as u64,
+    };
+    let code = encode(&payload).unwrap();
+
+    // Should fail to connect (not panic/hang forever)
     let result = timeout(
-        Duration::from_secs(5),
-        Joiner::connect_to_with_timeout(
-            client,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
-            80,
-            Duration::from_secs(2),
-        ),
+        Duration::from_secs(10),
+        Joiner::connect(&connector, &code, "joiner"),
     )
     .await;
 
-    // Should either timeout or return a connection error (not panic/hang forever)
     match result {
         Ok(Ok(_)) => panic!("should not connect to non-existent address"),
         Ok(Err(ChatError::Connection(_))) => { /* expected */ }

@@ -23,3 +23,7 @@ futures = "0.3"
 async-stream = "0.3"
 tokio-stream = "0.1"
 tor-cell = "0.42"
+async-trait = "0.1"
+
+[dev-dependencies]
+tor-rtmock = "0.42"
