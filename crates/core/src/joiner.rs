@@ -47,6 +47,7 @@ use crate::error::{ChatError, Result};
 use crate::connector::TorConnector;
 use crate::invite::decode as decode_invite;
 use crate::types::{ChatEvent, PeerId};
+use crate::wire;
 use crate::wire::{encode_message, WireMessage};
 
 /// How long to wait for data before considering the peer dead.
@@ -164,7 +165,271 @@ impl Joiner {
         events: mpsc::Sender<ChatEvent>,
         shutdown: watch::Receiver<()>,
     ) -> Result<()> {
-        todo!()
+        match self.stream.take() {
+            Some(stream) => {
+                self.run_connected(stream, messages, events, shutdown).await
+            }
+            None => self.run_disconnected(messages, events, shutdown).await,
+        }
+    }
+
+    /// Full run loop with an active stream: reader task + writer + message loop.
+    async fn run_connected(
+        &self,
+        stream: DataStream,
+        messages: mpsc::Receiver<String>,
+        events: mpsc::Sender<ChatEvent>,
+        shutdown: watch::Receiver<()>,
+    ) -> Result<()> {
+        let (reader, writer) = tokio::io::split(stream);
+        let (reader_done_tx, mut reader_done_rx) = mpsc::channel::<()>(1);
+
+        let reader_handle = Self::spawn_reader(reader, events.clone(), reader_done_tx);
+
+        let result = Self::write_loop(
+            writer,
+            messages,
+            events,
+            shutdown,
+            &mut reader_done_rx,
+            &self.name,
+            &self.peer_id,
+        )
+        .await;
+
+        Self::stop_reader(reader_handle).await;
+        result
+    }
+
+    /// Minimal run loop when no stream is present — only dispatches messages
+    /// to the event channel and listens for shutdown.
+    async fn run_disconnected(
+        &self,
+        mut messages: mpsc::Receiver<String>,
+        events: mpsc::Sender<ChatEvent>,
+        mut shutdown: watch::Receiver<()>,
+    ) -> Result<()> {
+        let mut pending: Vec<ChatEvent> = Vec::new();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = shutdown.changed() => {
+                    Self::drain_and_flush(&mut messages, &events, &self.peer_id, &self.name, &mut pending).await;
+                    return Ok(());
+                }
+
+                msg = messages.recv() => match msg {
+                    Some(text) => {
+                        let event = Self::make_event(&self.peer_id, &self.name, &text);
+                        Self::try_emit(&events, event, &mut pending);
+                    }
+                    None => {
+                        Self::drain_and_flush(&mut messages, &events, &self.peer_id, &self.name, &mut pending).await;
+                        return Ok(()); // channel closed
+                    }
+                },
+
+                _ = events.closed() => {
+                    return Err(ChatError::Connection("event receiver dropped".into()));
+                }
+            }
+        }
+    }
+
+    /// Build a ChatEvent::Message for an outgoing chat message.
+    fn make_event(peer_id: &PeerId, name: &str, text: &str) -> ChatEvent {
+        ChatEvent::Message {
+            from: peer_id.clone(),
+            name: name.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    /// Drain any remaining buffered messages and flush pending events.
+    /// Called on shutdown / channel-close to ensure no in-flight messages are lost.
+    async fn drain_and_flush(
+        messages: &mut mpsc::Receiver<String>,
+        events: &mpsc::Sender<ChatEvent>,
+        peer_id: &PeerId,
+        name: &str,
+        pending: &mut Vec<ChatEvent>,
+    ) {
+        while let Ok(text) = messages.try_recv() {
+            let event = Self::make_event(peer_id, name, &text);
+            Self::try_emit(events, event, pending);
+        }
+        Self::flush_pending(events, pending).await;
+    }
+
+    /// Try to send an event immediately.  On back-pressure, buffer locally.
+    fn try_emit(events: &mpsc::Sender<ChatEvent>, event: ChatEvent, pending: &mut Vec<ChatEvent>) {
+        if events.try_send(event.clone()).is_err() {
+            pending.push(event);
+        }
+    }
+
+    /// Drain all locally buffered events into the channel.
+    /// Uses `try_send` — events that can't fit are silently dropped.
+    async fn flush_pending(events: &mpsc::Sender<ChatEvent>, pending: &mut Vec<ChatEvent>) {
+        while let Some(event) = pending.pop() {
+            if events.try_send(event).is_err() {
+                break;
+            }
+        }
+    }
+
+    /// Spawns a background task that reads wire frames from the hub,
+    /// decodes them, and forwards as `ChatEvent::Message` or `ChatEvent::Error`.
+    fn spawn_reader<R>(
+        mut reader: R,
+        events: mpsc::Sender<ChatEvent>,
+        done_tx: mpsc::Sender<()>,
+    ) -> tokio::task::JoinHandle<()>
+    where
+        R: tokio::io::AsyncReadExt + Unpin + Send + 'static,
+    {
+        tokio::spawn(async move {
+            Self::reader_loop(&mut reader, &events).await;
+            let _ = done_tx.send(()).await;
+        })
+    }
+
+    /// Inner reader loop: reads frames until error, timeout, or channel close.
+    async fn reader_loop<R>(reader: &mut R, events: &mpsc::Sender<ChatEvent>)
+    where
+        R: tokio::io::AsyncReadExt + Unpin,
+    {
+        loop {
+            match timeout(READ_TIMEOUT, wire::read_frame(reader)).await {
+                Ok(Ok(frame)) => {
+                    Self::handle_incoming_frame(&frame, events).await;
+                }
+                Ok(Err(_)) => break, // wire error — hub disconnected or bad frame
+                Err(_) => break,     // read timeout — peer considered dead
+            }
+        }
+    }
+
+    /// Decode a single incoming frame and emit the corresponding `ChatEvent`.
+    async fn handle_incoming_frame(frame: &[u8], events: &mpsc::Sender<ChatEvent>) {
+        match wire::decode_message(frame) {
+            Ok(msg) => {
+                let event = ChatEvent::Message {
+                    from: PeerId(msg.name.clone()),
+                    name: msg.name,
+                    text: msg.text,
+                };
+                if events.send(event).await.is_err() {
+                    // Event receiver dropped — nothing more to do.
+                }
+            }
+            Err(_) => {
+                // Malformed frame — ignore silently.
+            }
+        }
+    }
+
+    /// Write loop: dispatches between outgoing messages, shutdown,
+    /// and reader completion.
+    async fn write_loop<W>(
+        mut writer: W,
+        mut messages: mpsc::Receiver<String>,
+        events: mpsc::Sender<ChatEvent>,
+        mut shutdown: watch::Receiver<()>,
+        reader_done_rx: &mut mpsc::Receiver<()>,
+        name: &str,
+        peer_id: &PeerId,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWriteExt + Unpin,
+    {
+        let mut pending: Vec<ChatEvent> = Vec::new();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                // 1. Shutdown signal — highest priority
+                _ = shutdown.changed() => {
+                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                    return Ok(());
+                }
+
+                // 2. Reader task finished (hub disconnected)
+                _ = reader_done_rx.recv() => {
+                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                    return Ok(());
+                }
+
+                // 3. Outgoing message from the local UI
+                msg = messages.recv() => {
+                    match msg {
+                        Some(text) => {
+                            Self::process_outgoing_message(
+                                &text, name, peer_id, &events, &mut pending, &mut writer,
+                            ).await?;
+                        }
+                        None => {
+                            Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                            return Ok(()); // channel closed
+                        }
+                    }
+                }
+
+                // 4. Event receiver dropped
+                _ = events.closed() => {
+                    return Err(ChatError::Connection("event receiver dropped".into()));
+                }
+            }
+        }
+    }
+
+    /// Encode an outgoing chat message, write it to the stream, and
+    /// emit a local `ChatEvent::Message` so the UI displays it.
+    async fn process_outgoing_message<W>(
+        text: &str,
+        name: &str,
+        peer_id: &PeerId,
+        events: &mpsc::Sender<ChatEvent>,
+        pending: &mut Vec<ChatEvent>,
+        writer: &mut W,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWriteExt + Unpin,
+    {
+        let msg = WireMessage::chat(name, text);
+        let frame = encode_message(&msg)?;
+
+        Self::write_frame(writer, &frame).await?;
+        let event = Self::make_event(peer_id, name, text);
+        Self::try_emit(events, event, pending);
+
+        Ok(())
+    }
+
+    /// Write a single encoded frame to the stream with a timeout.
+    async fn write_frame<W>(writer: &mut W, frame: &[u8]) -> Result<()>
+    where
+        W: tokio::io::AsyncWriteExt + Unpin,
+    {
+        timeout(WRITE_TIMEOUT, writer.write_all(frame))
+            .await
+            .map_err(|_| ChatError::Connection("write timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("write failed: {e}")))?;
+
+        timeout(WRITE_TIMEOUT, writer.flush())
+            .await
+            .map_err(|_| ChatError::Connection("flush timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("flush failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Await the reader task handle, swallowing any panic.
+    async fn stop_reader(handle: tokio::task::JoinHandle<()>) {
+        let _ = handle.await;
     }
 
     /// Close the connection. Idempotent.
@@ -561,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn run_rapid_message_then_shutdown() {
         let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(64);
         let (sd_tx, sd_rx) = watch::channel(());
 
         let mut j = make_joiner();
