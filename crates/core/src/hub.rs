@@ -14,6 +14,7 @@ use base58::ToBase58;
 use futures::StreamExt;
 use safelog::DisplayRedacted;
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
@@ -149,42 +150,63 @@ impl Drop for HostedRoom {
 }
 
 // ---------------------------------------------------------------------------
-// PeerRegistry — thread-safe peer tracking (stub — will be implemented in step 2)
+// PeerRegistry — thread-safe peer tracking
 // ---------------------------------------------------------------------------
 
 type PeerTx = mpsc::UnboundedSender<Vec<u8>>;
 type NonceSet = Arc<tokio::sync::Mutex<HashSet<[u8; 16]>>>;
 
+struct PeerEntry {
+    name: String,
+    joined_at: std::time::Instant,
+    tx: PeerTx,
+}
+
 pub struct PeerRegistry {
-    // TODO: inner HashMap wrapped in RwLock
+    inner: Arc<tokio::sync::RwLock<HashMap<PeerId, PeerEntry>>>,
 }
 
 impl PeerRegistry {
     pub fn new() -> Self {
-        todo!("step 2: create PeerRegistry")
+        Self {
+            inner: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        }
     }
 
     pub async fn register(&self, peer_id: PeerId, name: String, tx: PeerTx) {
-        let _ = (peer_id, name, tx);
-        todo!("step 2: insert peer into registry")
+        let entry = PeerEntry {
+            name,
+            joined_at: std::time::Instant::now(),
+            tx,
+        };
+        self.inner.write().await.insert(peer_id, entry);
     }
 
     pub async fn deregister(&self, peer_id: &PeerId) {
-        let _ = peer_id;
-        todo!("step 2: remove peer from registry")
+        self.inner.write().await.remove(peer_id);
     }
 
     pub async fn snapshot(&self) -> Vec<PeerInfo> {
-        todo!("step 2: return peer snapshot")
+        self.inner
+            .read()
+            .await
+            .iter()
+            .map(|(id, e)| PeerInfo {
+                id: id.clone(),
+                name: e.name.clone(),
+                joined_at: e.joined_at,
+            })
+            .collect()
     }
 
     pub async fn len(&self) -> usize {
-        todo!("step 2: return peer count")
+        self.inner.read().await.len()
     }
 
     pub async fn broadcast_to_all(&self, frame: &[u8]) {
-        let _ = frame;
-        todo!("step 2: broadcast frame to all peers")
+        for entry in self.inner.read().await.values() {
+            let _ = entry.tx.send(frame.to_vec());
+        }
     }
 }
 
