@@ -42,6 +42,7 @@ use base58::ToBase58;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Duration};
+use tracing::warn;
 
 use crate::error::{ChatError, Result};
 use crate::connector::TorConnector;
@@ -275,6 +276,8 @@ impl Joiner {
     async fn flush_pending(events: &mpsc::Sender<ChatEvent>, pending: &mut Vec<ChatEvent>) {
         while let Some(event) = pending.pop() {
             if events.try_send(event).is_err() {
+                warn!("joiner: event channel full on flush, dropping {} pending events", pending.len() + 1);
+                pending.clear();
                 break;
             }
         }
@@ -325,8 +328,8 @@ impl Joiner {
                     // Event receiver dropped — nothing more to do.
                 }
             }
-            Err(_) => {
-                // Malformed frame — ignore silently.
+            Err(e) => {
+                warn!("joiner: malformed incoming frame: {e}");
             }
         }
     }
@@ -438,6 +441,7 @@ impl Joiner {
     }
 
     /// Test constructor. Not for production use.
+    #[doc(hidden)]
     pub fn new_for_test(peer_id: PeerId, name: String) -> Self {
         Self {
             stream: None,
