@@ -260,7 +260,7 @@ async fn run_handles_unicode_message() {
 #[tokio::test]
 async fn run_rapid_messages_then_shutdown() {
     let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(64);
     let (sd_tx, sd_rx) = watch::channel(());
 
     let mut j = make_joiner();
@@ -293,4 +293,65 @@ fn close_is_idempotent() {
 #[test]
 fn drop_calls_close() {
     drop(make_joiner());
+}
+
+// ── additional coverage matching unit tests ──────────────────────────────
+
+#[tokio::test]
+async fn run_forwards_single_message_to_events() {
+    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+    let (sd_tx, sd_rx) = watch::channel(());
+
+    let mut j = make_joiner();
+    let handle = tokio::spawn(async move {
+        j.run(msg_rx, evt_tx, sd_rx).await
+    });
+
+    msg_tx.send("hello".to_string()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    sd_tx.send(()).unwrap();
+    handle.await.unwrap().unwrap();
+
+    let events = drain(&mut evt_rx).await;
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "hello")));
+}
+
+#[tokio::test]
+async fn run_handles_long_message() {
+    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(16);
+    let (sd_tx, sd_rx) = watch::channel(());
+
+    let mut j = make_joiner();
+    let handle = tokio::spawn(async move {
+        j.run(msg_rx, evt_tx, sd_rx).await
+    });
+
+    let long = "x".repeat(8192);
+    msg_tx.send(long).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    sd_tx.send(()).unwrap();
+    handle.await.unwrap().unwrap();
+
+    let events = drain(&mut evt_rx).await;
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text.len() == 8192)));
+}
+
+#[tokio::test]
+async fn run_shutdown_while_message_in_flight() {
+    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+    let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(16);
+    let (sd_tx, sd_rx) = watch::channel(());
+
+    let mut j = make_joiner();
+    let handle = tokio::spawn(async move {
+        j.run(msg_rx, evt_tx, sd_rx).await
+    });
+
+    msg_tx.send("in-flight".to_string()).await.unwrap();
+    sd_tx.send(()).unwrap();
+
+    let result = handle.await.unwrap();
+    assert!(result.is_ok());
 }

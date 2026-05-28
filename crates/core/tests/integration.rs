@@ -156,7 +156,7 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
     let connector = ArtiConnector::new(client_joiner);
     let invite_code_clone = invite_code.clone();
     let joiner_handle = tokio::spawn(async move {
-        let mut joiner = Joiner::connect(
+        let joiner = Joiner::connect(
             &connector,
             &invite_code_clone,
             "joiner",

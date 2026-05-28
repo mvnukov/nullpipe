@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use ephemeral_chat_core::connector::ArtiConnector;
 use ephemeral_chat_core::invite::decode as decode_invite;
-use ephemeral_chat_core::types::{ChatEvent, HostConfig, JoinConfig, PeerInfo};
-use ephemeral_chat_core::{host, host_with_client, join_with_client, SharedTorClient};
+use ephemeral_chat_core::types::{ChatEvent, HostConfig, PeerInfo};
+use ephemeral_chat_core::{host_with_client, SharedTorClient};
 use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
@@ -58,7 +58,6 @@ fn peer_join(e: &ChatEvent) -> Option<PeerInfo> {
 // Requires: run() implementation
 
 #[tokio::test]
-#[ignore = "requires run() implementation"]
 async fn e2e_joiner_connects_receives_messages() {
     let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
 
@@ -81,7 +80,7 @@ async fn e2e_joiner_connects_receives_messages() {
         .expect("Joiner::connect failed");
 
     let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(256);
+    let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(256);
     let (_sd_tx, sd_rx) = watch::channel(());
 
     let joiner_task = tokio::spawn(async move {
@@ -217,7 +216,6 @@ async fn e2e_joiner_close_cleans_up() {
 // Requires: run() implementation
 
 #[tokio::test]
-#[ignore = "requires run() implementation"]
 async fn e2e_joiner_respects_shutdown_signal() {
     let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
 
@@ -239,8 +237,8 @@ async fn e2e_joiner_respects_shutdown_signal() {
         .await
         .expect("Joiner::connect failed");
 
-    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, evt_rx) = mpsc::channel::<ChatEvent>(256);
+    let (_msg_tx, msg_rx) = mpsc::channel::<String>(16);
+    let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(256);
     let (sd_tx, sd_rx) = watch::channel(());
 
     let joiner_task = tokio::spawn(async move {
