@@ -387,10 +387,60 @@ impl Hub {
     // -- wire protocol (stub — implemented in step 4) --
 
     async fn handshake(
-        _stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
-        _nonces: NonceSet,
+        stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
+        nonces: NonceSet,
     ) -> Result<(PeerId, String)> {
-        todo!("step 4: implement handshake")
+        let mut buf = [0u8; HANDSHAKE_LEN];
+        let mut pos = 0;
+        while pos < HANDSHAKE_LEN {
+            match timeout(READ_TIMEOUT, stream.read(&mut buf[pos..])).await {
+                Ok(Ok(0)) => {
+                    // EOF before full handshake
+                    stream.write_all(&[1]).await.ok();
+                    return Err(ChatError::InvalidInvite(
+                        "handshake: unexpected EOF".into(),
+                    ));
+                }
+                Ok(Ok(n)) => pos += n,
+                Ok(Err(e)) => {
+                    return Err(ChatError::Connection(format!("handshake read: {e}")));
+                }
+                Err(_) => {
+                    return Err(ChatError::Connection("handshake timed out".into()));
+                }
+            }
+        }
+
+        let nonce: [u8; 16] = buf[..16]
+            .try_into()
+            .expect("handshake buffer is HANDSHAKE_LEN");
+        let discriminator: [u8; 16] = buf[16..32]
+            .try_into()
+            .expect("handshake buffer is HANDSHAKE_LEN");
+
+        // Single-use nonce check
+        {
+            let mut set = nonces.lock().await;
+            if set.contains(&nonce) {
+                stream.write_all(&[1]).await.ok();
+                return Err(ChatError::NonceReused);
+            }
+            set.insert(nonce);
+        }
+
+        // Build PeerId from the random discriminator
+        let peer_id = PeerId(discriminator.to_base58());
+
+        // Accept
+        timeout(WRITE_TIMEOUT, stream.write_all(&[0]))
+            .await
+            .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+
+        // Derive a short human-friendly name from the same bytes
+        let name = format!("peer-{}", hex::encode(&discriminator[..4]));
+
+        Ok((peer_id, name))
     }
 
     // -- per-peer I/O tasks (stubs — implemented in steps 6-7) --
@@ -734,6 +784,7 @@ mod tests {
         let (mut client, mut server) = duplex(64);
 
         client.write_all(&[0u8; 16]).await.unwrap();
+        client.shutdown().await.unwrap();
 
         let _ = Hub::handshake(&mut server, nonces).await;
 
