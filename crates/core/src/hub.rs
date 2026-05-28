@@ -26,7 +26,7 @@ use tracing::{info, warn};
 
 use crate::error::{ChatError, Result};
 use crate::types::{ChatEvent, PeerId, PeerInfo};
-use crate::wire::{encode_message, WireMessage};
+use crate::wire::{decode_message, encode_message, read_frame, WireMessage};
 
 /// Handshake size: 16-byte nonce + 16-byte random peer discriminator.
 const HANDSHAKE_LEN: usize = 32;
@@ -258,12 +258,23 @@ impl Hub {
     }
 
     pub async fn broadcast_hub(&self, text: &str) {
-        let _ = text;
-        todo!("step 2: broadcast message via PeerRegistry")
+        let msg = WireMessage::system(text);
+        let event = ChatEvent::Message {
+            from: PeerId("[hub]".into()),
+            name: "[system]".into(),
+            text: text.to_string(),
+        };
+        self.broadcast_tx.send(event).ok();
+
+        if let Ok(frame) = encode_message(&msg) {
+            self.peers.broadcast_to_all(&frame).await;
+        }
     }
 
     pub async fn broadcast_ping(&self) {
-        todo!("step 2: broadcast ping via PeerRegistry")
+        if let Ok(frame) = encode_message(&WireMessage::ping()) {
+            self.peers.broadcast_to_all(&frame).await;
+        }
     }
 
     pub async fn next_event(&mut self) -> Option<ChatEvent> {
@@ -375,8 +386,28 @@ impl Hub {
         tx: PeerTx,
         rx: mpsc::UnboundedReceiver<Vec<u8>>,
     ) {
-        let _ = (stream, peer_id, name, peers, msg_tx, broadcast_tx, tx, rx);
-        todo!("step 6: implement run_peer_io")
+        let (reader_half, writer_half) = tokio::io::split(stream);
+
+        let r_peer = peer_id.clone();
+        let r_name = name.to_string();
+        let r_peers = Arc::clone(peers);
+        let r_msg = msg_tx.clone();
+        let r_broadcast = broadcast_tx.clone();
+        let r_tx = tx.clone();
+        tokio::spawn(async move {
+            Self::reader_task(
+                reader_half,
+                r_peer,
+                r_name,
+                r_peers,
+                r_msg,
+                r_broadcast,
+                r_tx,
+            )
+            .await;
+        });
+
+        Self::writer_task(rx, broadcast_tx.subscribe(), writer_half).await;
     }
 
     /// Phase 4: deregister peer, broadcast leave.
@@ -461,23 +492,110 @@ impl Hub {
     // -- per-peer I/O tasks (stubs — implemented in steps 6-7) --
 
     async fn reader_task(
-        _stream: impl AsyncReadExt + Unpin,
-        _peer_id: PeerId,
-        _name: String,
+        mut stream: impl AsyncReadExt + Unpin,
+        peer_id: PeerId,
+        name: String,
         _peers: Arc<PeerRegistry>,
-        _msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
-        _broadcast_tx: broadcast::Sender<ChatEvent>,
-        _writer_tx: mpsc::UnboundedSender<Vec<u8>>,
+        msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
+        broadcast_tx: broadcast::Sender<ChatEvent>,
+        writer_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) {
-        todo!("step 6: implement reader_task")
+        loop {
+            match timeout(READ_TIMEOUT, read_frame(&mut stream)).await {
+                Ok(Ok(frame)) => {
+                    match decode_message(&frame) {
+                        Ok(wire_msg) => {
+                            if wire_msg.kind == crate::wire::MessageType::Ping {
+                                if let Ok(pong_frame) = encode_message(&WireMessage::pong()) {
+                                    let _ = writer_tx.send(pong_frame);
+                                }
+                                continue;
+                            }
+
+                            let _ = msg_tx.send((peer_id.clone(), wire_msg.clone())).await;
+
+                            if wire_msg.kind == crate::wire::MessageType::Chat {
+                                let event = ChatEvent::Message {
+                                    from: peer_id.clone(),
+                                    name: name.clone(),
+                                    text: wire_msg.text.clone(),
+                                };
+                                let _ = broadcast_tx.send(event);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("hub: peer {peer_id} sent malformed message: {e}");
+                            break;
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    warn!("hub: read error for peer {peer_id}: {e}");
+                    break;
+                }
+                Err(_) => {
+                    warn!("hub: read timeout for peer {peer_id}, considering dead");
+                    break;
+                }
+            }
+        }
+        info!("hub: reader task ended for {peer_id} ({name})");
     }
 
     async fn writer_task(
-        _rx: mpsc::UnboundedReceiver<Vec<u8>>,
-        _broadcast_rx: broadcast::Receiver<ChatEvent>,
-        _stream: impl AsyncWriteExt + Unpin,
+        mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        mut broadcast_rx: broadcast::Receiver<ChatEvent>,
+        mut stream: impl AsyncWriteExt + Unpin,
     ) {
-        todo!("step 7: implement writer_task using write_frame")
+        loop {
+            tokio::select! {
+                biased;
+
+                maybe_frame = rx.recv() => {
+                    let frame = match maybe_frame {
+                        Some(f) => f,
+                        None => break,
+                    };
+                    if timeout(WRITE_TIMEOUT, stream.write_all(&frame)).await.is_err() {
+                        warn!("hub: writer task write timeout");
+                        break;
+                    }
+                }
+
+                br = broadcast_rx.recv() => {
+                    match br {
+                        Ok(event) => {
+                            let wire_msg = match event {
+                                ChatEvent::Message { name, text, .. } => {
+                                    WireMessage::chat(&name, &text)
+                                }
+                                ChatEvent::PeerJoin(info) => {
+                                    WireMessage::system(&format!("{} joined", info.name))
+                                }
+                                ChatEvent::PeerLeave(pid) => {
+                                    WireMessage::system(&format!("{pid} left"))
+                                }
+                                _ => continue,
+                            };
+                            if let Ok(frame) = encode_message(&wire_msg) {
+                                if timeout(WRITE_TIMEOUT, stream.write_all(&frame)).await.is_err() {
+                                    warn!("hub: writer task broadcast write timeout");
+                                    break;
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("hub: writer task broadcast lagged {n} messages");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            info!("hub: writer task broadcast channel closed");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        info!("hub: writer task ended");
     }
 }
 
@@ -1031,17 +1149,17 @@ mod tests {
         let (broadcast_tx, _broadcast_rx) = broadcast::channel::<ChatEvent>(16);
         let (mut input, writer) = duplex(64);
 
-        drop(tx);
-
         let frame = encode_message(&WireMessage::chat("bob", "hey")).unwrap();
+        // Subscribe before sending so the receiver sees the message
+        let sub = broadcast_tx.subscribe();
         let _ = broadcast_tx.send(ChatEvent::Message {
             from: PeerId("b".into()),
             name: "bob".into(),
             text: "hey".into(),
         });
-        // Subscribe before dropping to avoid use-after-move
-        let sub = broadcast_tx.subscribe();
         drop(broadcast_tx);
+        // Keep tx alive so rx.recv() stays pending and biased select
+        // can reach the broadcast branch. tx drops when test ends.
 
         Hub::writer_task(rx, sub, writer).await;
 
