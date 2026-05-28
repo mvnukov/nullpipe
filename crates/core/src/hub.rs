@@ -353,8 +353,15 @@ impl Hub {
         broadcast_tx: &broadcast::Sender<ChatEvent>,
     ) -> (PeerTx, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let _ = (peers, peer_id, name, broadcast_tx, &tx);
-        todo!("step 5: implement register_peer")
+        peers
+            .register(peer_id.clone(), name.to_string(), tx.clone())
+            .await;
+        let _ = broadcast_tx.send(ChatEvent::PeerJoin(PeerInfo {
+            id: peer_id.clone(),
+            name: name.to_string(),
+            joined_at: std::time::Instant::now(),
+        }));
+        (tx, rx)
     }
 
     /// Phase 3: split stream, spawn reader, run writer.
