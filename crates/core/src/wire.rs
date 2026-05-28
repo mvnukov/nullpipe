@@ -7,7 +7,8 @@
 //!   {"type":"chat|system|ping|pong","name":"...","text":"..."}
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::time::{timeout, Duration};
 
 use crate::error::{ChatError, Result};
 
@@ -182,6 +183,26 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMe
     decode_message(&frame)
 }
 
+/// Write a single encoded frame to an async writer with timeout protection.
+///
+/// Writes the frame and flushes the stream, both protected by the given timeout.
+pub async fn write_frame<W>(writer: &mut W, frame: &[u8], write_timeout: Duration) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    timeout(write_timeout, writer.write_all(frame))
+        .await
+        .map_err(|_| ChatError::Connection("write timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("write failed: {e}")))?;
+
+    timeout(write_timeout, writer.flush())
+        .await
+        .map_err(|_| ChatError::Connection("flush timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("flush failed: {e}")))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +326,19 @@ mod tests {
         let decoded = decode_message(&frame).unwrap();
         assert_eq!(decoded.name, "bob");
         assert_eq!(decoded.text, "async test");
+    }
+
+    #[tokio::test]
+    async fn write_frame_roundtrip() {
+        let msg = WireMessage::chat("alice", "hello");
+        let encoded = encode_message(&msg).unwrap();
+
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        write_frame(&mut writer, &encoded, Duration::from_secs(5)).await.unwrap();
+
+        let frame = read_frame(&mut reader).await.unwrap();
+        let decoded = decode_message(&frame).unwrap();
+        assert_eq!(decoded.name, "alice");
+        assert_eq!(decoded.text, "hello");
     }
 }
