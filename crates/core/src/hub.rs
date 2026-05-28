@@ -387,8 +387,16 @@ impl Hub {
         msg_tx: &mpsc::Sender<(PeerId, WireMessage)>,
         broadcast_tx: &broadcast::Sender<ChatEvent>,
     ) {
-        let _ = (peers, peer_id, name, msg_tx, broadcast_tx);
-        todo!("step 5: implement deregister_peer")
+        peers.deregister(peer_id).await;
+
+        let _ = msg_tx
+            .send((
+                PeerId("[system]".into()),
+                WireMessage::system(&format!("{name} left")),
+            ))
+            .await;
+
+        let _ = broadcast_tx.send(ChatEvent::PeerLeave(peer_id.clone()));
     }
 
     // -- wire protocol (stub — implemented in step 4) --
@@ -864,6 +872,9 @@ mod tests {
 
         let (tx, _) = Hub::register_peer(&reg, &PeerId("carol".into()), "carol", &broadcast_tx).await;
         let _ = tx;
+
+        // Drain the PeerJoin from register_peer
+        let _ = broadcast_rx.recv().await;
 
         Hub::deregister_peer(&reg, &PeerId("carol".into()), "carol", &msg_tx, &broadcast_tx).await;
 
