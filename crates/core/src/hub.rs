@@ -239,6 +239,12 @@ impl Hub {
         }
     }
 
+    /// Subscribe to hub broadcast events (room ready, messages, peer join/leave).
+    /// Allows external observation of hub events while run() is active.
+    pub fn subscribe(&self) -> broadcast::Receiver<ChatEvent> {
+        self.broadcast_tx.subscribe()
+    }
+
     // -- public API --
 
     pub fn address(&self) -> &str {
@@ -482,6 +488,12 @@ impl Hub {
             .await
             .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+
+        // Flush to ensure the ack byte reaches the peer over the Tor network.
+        timeout(WRITE_TIMEOUT, stream.flush())
+            .await
+            .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
+            .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
 
         // Derive a short human-friendly name from the same bytes
         let name = format!("peer-{}", hex::encode(&discriminator[..4]));
@@ -1145,7 +1157,7 @@ mod tests {
 
     #[tokio::test]
     async fn writer_task_writes_from_broadcast_channel() {
-        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (_tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let (broadcast_tx, _broadcast_rx) = broadcast::channel::<ChatEvent>(16);
         let (mut input, writer) = duplex(64);
 

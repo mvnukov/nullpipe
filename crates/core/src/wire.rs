@@ -186,6 +186,8 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMe
 /// Write a single encoded frame to an async writer with timeout protection.
 ///
 /// Writes the frame and flushes the stream, both protected by the given timeout.
+#[allow(dead_code)]
+
 pub async fn write_frame<W>(writer: &mut W, frame: &[u8], write_timeout: Duration) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,

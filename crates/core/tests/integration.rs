@@ -139,8 +139,7 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
         .expect("HostedRoom::new failed");
     let addr = room.address().to_string();
 
-    // Wait for the onion service to publish its descriptor and establish
-    // intro points before any client tries to connect.
+    // Wait for the onion service to publish its descriptor
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Create an invite code for the joiner
@@ -151,80 +150,55 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
     };
     let invite_code = encode(&invite_payload).expect("encode invite");
 
-    // Joiner connects using the new API
+    // Create Hub
+    let mut hub = ephemeral_chat_core::hub::Hub::new(room);
+
+    // Run hub in background
+    let hub_task = tokio::spawn(async move {
+        hub.run().await;
+    });
+
+    // Give hub task time to start accepting
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify hub task is still running (not finished)
+    assert!(!hub_task.is_finished(), "hub task should be running, not finished");
+
+    // Joiner connects
     let client_joiner = bootstrap.client().expect("client ref").clone();
     let connector = ArtiConnector::new(client_joiner);
-    let invite_code_clone = invite_code.clone();
-    let joiner_handle = tokio::spawn(async move {
-        let joiner = Joiner::connect(
-            &connector,
-            &invite_code_clone,
-            "joiner",
-        )
+    let joiner = Joiner::connect(&connector, &invite_code, "joiner")
         .await
         .expect("Joiner::connect failed");
 
-        let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-        let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(256);
-        let (_sd_tx, sd_rx) = watch::channel(());
+    // Verify joiner is connected by running it and sending a message
+    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
+    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(256);
+    let (_sd_tx, sd_rx) = watch::channel(());
 
-        // Run joiner in background
-        let run_handle = tokio::spawn(async move {
-            let mut j = joiner;
-            j.run(msg_rx, evt_tx, sd_rx).await
-        });
-
-        // Send a chat message
-        msg_tx.send("hello from joiner".to_string()).await.expect("send failed");
-
-        // Read response from hub via events
-        let mut response_text = String::new();
-        while let Some(event) = timeout(Duration::from_secs(30), evt_rx.recv())
-            .await
-            .ok()
-            .flatten()
-        {
-            if let ChatEvent::Message { text, .. } = event {
-                response_text = text;
-                break;
-            }
-        }
-
-        run_handle.abort();
-        response_text
+    let joiner_task = tokio::spawn(async move {
+        let mut j = joiner;
+        j.run(msg_rx, evt_tx, sd_rx).await
     });
 
-    // Hub accepts the incoming peer and reads/writes via wire protocol
-    let mut hub = ephemeral_chat_core::hub::Hub::new(room);
-    let hub_run = tokio::spawn(async move {
-        while let Some(event) = timeout(Duration::from_secs(90), hub.next_event())
-            .await
-            .expect("hub next_event timeout")
-        {
-            match event {
-                ChatEvent::Message { ref text, .. } => {
-                    if text == "hello from joiner" {
-                        // Echo back through the hub
-                        hub.broadcast_hub(&format!("hub received: {text}")).await;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        hub
-    });
+    // Send a chat message
+    msg_tx.send("hello from joiner".to_string()).await.expect("send failed");
 
-    // Verify joiner received the response
-    let joiner_response = joiner_handle.await.expect("joiner task panicked");
+    // Joiner should receive the message back via hub's echo
+    let joiner_response = timeout(Duration::from_secs(30), evt_rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("joiner should receive echoed message");
     assert!(
-        joiner_response.contains("hello from joiner"),
-        "expected joiner to receive echo, got: {joiner_response}"
+        matches!(&joiner_response, ChatEvent::Message { text, .. } if text == "hello from joiner"),
+        "expected joiner to receive its own message, got: {joiner_response:?}"
     );
 
     // Clean up
-    let mut hub = hub_run.await.expect("hub task panicked");
-    hub.shutdown();
+    joiner_task.abort();
+    hub_task.abort();
+    tokio::time::sleep(Duration::from_millis(100)).await;
     bootstrap.shutdown();
 }
 
@@ -236,7 +210,7 @@ async fn e2e_joiner_timeout_on_bad_address() {
 
     // Create a valid-looking invite pointing to a non-existent onion
     let payload = InvitePayload {
-        onion_address: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion".into(),
+        onion_address: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion".into(),
         nonce: [0x42u8; 16],
         timestamp: chrono::Utc::now().timestamp() as u64,
     };
