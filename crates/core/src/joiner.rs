@@ -39,7 +39,7 @@
 
 use arti_client::DataStream;
 use base58::ToBase58;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Duration};
 use tracing::warn;
@@ -95,33 +95,30 @@ impl Joiner {
     ///
     /// Called by [`Joiner::connect`]. Generates nonce+discriminator, writes 32 bytes,
     /// reads accept/reject byte, sends display name as first wire message.
-    async fn handshake<S>(stream: S, name: &str) -> Result<(PeerId, S)>
+    async fn handshake<S>(mut stream: S, name: &str) -> Result<(PeerId, S)>
     where
         S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
     {
         let nonce: [u8; 16] = rand::random();
         let discriminator: [u8; 16] = rand::random();
 
-        // Split stream so we can read and write concurrently
-        let (mut reader, mut writer) = tokio::io::split(stream);
-
         // Write 32-byte handshake: nonce || discriminator
         let mut buf = [0u8; 32];
         buf[..16].copy_from_slice(&nonce);
         buf[16..32].copy_from_slice(&discriminator);
 
-        timeout(WRITE_TIMEOUT, writer.write_all(&buf))
+        timeout(WRITE_TIMEOUT, stream.write_all(&buf))
             .await
             .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
-        timeout(WRITE_TIMEOUT, writer.flush())
+        timeout(WRITE_TIMEOUT, stream.flush())
             .await
             .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
 
         // Read accept/reject byte from hub
         let mut response = [0u8; 1];
-        timeout(READ_TIMEOUT, reader.read_exact(&mut response))
+        timeout(READ_TIMEOUT, stream.read_exact(&mut response))
             .await
             .map_err(|_| ChatError::Connection("handshake read timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake read: {e}")))?;
@@ -135,17 +132,14 @@ impl Joiner {
         // Send display name as first wire message
         let name_msg = WireMessage::system(name);
         let frame = encode_message(&name_msg)?;
-        timeout(WRITE_TIMEOUT, writer.write_all(&frame))
+        timeout(WRITE_TIMEOUT, stream.write_all(&frame))
             .await
             .map_err(|_| ChatError::Connection("handshake name write timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake name write: {e}")))?;
-        timeout(WRITE_TIMEOUT, writer.flush())
+        timeout(WRITE_TIMEOUT, stream.flush())
             .await
             .map_err(|_| ChatError::Connection("handshake name flush timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("handshake name flush: {e}")))?;
-
-        // Reunite reader and writer for the caller
-        let stream = reader.unsplit(writer);
 
         Ok((peer_id, stream))
     }
@@ -299,6 +293,30 @@ impl Joiner {
         })
     }
 
+    /// Arc<Mutex> version of spawn_reader for shared stream access.
+    fn spawn_reader_arc(
+        stream: Arc<tokio::sync::Mutex<DataStream>>,
+        events: mpsc::Sender<ChatEvent>,
+        done_tx: mpsc::Sender<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                let frame_result = {
+                    let mut locked = stream.lock().await;
+                    timeout(READ_TIMEOUT, wire::read_frame(&mut *locked)).await
+                };
+                match frame_result {
+                    Ok(Ok(frame)) => {
+                        Self::handle_incoming_frame(&frame, &events).await;
+                    }
+                    Ok(Err(_)) => break,
+                    Err(_) => break,
+                }
+            }
+            let _ = done_tx.send(()).await;
+        })
+    }
+
     /// Inner reader loop: reads frames until error, timeout, or channel close.
     async fn reader_loop<R>(reader: &mut R, events: &mpsc::Sender<ChatEvent>)
     where
@@ -389,6 +407,57 @@ impl Joiner {
         }
     }
 
+    /// Arc<Mutex> version of write_loop for shared stream access.
+    async fn write_loop_arc(
+        stream: Arc<tokio::sync::Mutex<DataStream>>,
+        mut messages: mpsc::Receiver<String>,
+        events: mpsc::Sender<ChatEvent>,
+        mut shutdown: watch::Receiver<()>,
+        reader_done_rx: &mut mpsc::Receiver<()>,
+        name: &str,
+        peer_id: &PeerId,
+    ) -> Result<()> {
+        let mut pending: Vec<ChatEvent> = Vec::new();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                // 1. Shutdown signal — highest priority
+                _ = shutdown.changed() => {
+                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                    return Ok(());
+                }
+
+                // 2. Reader task finished (hub disconnected)
+                _ = reader_done_rx.recv() => {
+                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                    return Ok(());
+                }
+
+                // 3. Outgoing message from the local UI
+                msg = messages.recv() => {
+                    match msg {
+                        Some(text) => {
+                            Self::process_outgoing_message_arc(
+                                &text, name, peer_id, &events, &mut pending, &stream,
+                            ).await?;
+                        }
+                        None => {
+                            Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
+                            return Ok(()); // channel closed
+                        }
+                    }
+                }
+
+                // 4. Event receiver dropped
+                _ = events.closed() => {
+                    return Err(ChatError::Connection("event receiver dropped".into()));
+                }
+            }
+        }
+    }
+
     /// Encode an outgoing chat message, write it to the stream, and
     /// emit a local `ChatEvent::Message` so the UI displays it.
     async fn process_outgoing_message<W>(
@@ -412,20 +481,45 @@ impl Joiner {
         Ok(())
     }
 
+    /// Arc<Mutex> version of process_outgoing_message for shared stream access.
+    async fn process_outgoing_message_arc(
+        text: &str,
+        name: &str,
+        peer_id: &PeerId,
+        events: &mpsc::Sender<ChatEvent>,
+        pending: &mut Vec<ChatEvent>,
+        stream: &Arc<tokio::sync::Mutex<DataStream>>,
+    ) -> Result<()> {
+        let msg = WireMessage::chat(name, text);
+        let frame = encode_message(&msg)?;
+
+        {
+            let mut locked = stream.lock().await;
+            Self::write_frame(&mut *locked, &frame).await?;
+        }
+        let event = Self::make_event(peer_id, name, text);
+        Self::try_emit(events, event, pending);
+
+        Ok(())
+    }
+
     /// Write a single encoded frame to the stream with a timeout.
     async fn write_frame<W>(writer: &mut W, frame: &[u8]) -> Result<()>
     where
         W: tokio::io::AsyncWriteExt + Unpin,
     {
+        eprintln!("[joiner-write] writing {} bytes", frame.len());
         timeout(WRITE_TIMEOUT, writer.write_all(frame))
             .await
             .map_err(|_| ChatError::Connection("write timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("write failed: {e}")))?;
+        eprintln!("[joiner-write] wrote {} bytes, flushing", frame.len());
 
         timeout(WRITE_TIMEOUT, writer.flush())
             .await
             .map_err(|_| ChatError::Connection("flush timed out".into()))?
             .map_err(|e| ChatError::Connection(format!("flush failed: {e}")))?;
+        eprintln!("[joiner-write] flush done");
 
         Ok(())
     }

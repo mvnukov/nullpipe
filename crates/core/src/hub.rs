@@ -447,7 +447,6 @@ impl Hub {
         while pos < HANDSHAKE_LEN {
             match timeout(READ_TIMEOUT, stream.read(&mut buf[pos..])).await {
                 Ok(Ok(0)) => {
-                    // EOF before full handshake
                     stream.write_all(&[1]).await.ok();
                     return Err(ChatError::InvalidInvite(
                         "handshake: unexpected EOF".into(),
@@ -480,7 +479,6 @@ impl Hub {
             set.insert(nonce);
         }
 
-        // Build PeerId from the random discriminator
         let peer_id = PeerId(discriminator.to_base58());
 
         // Accept

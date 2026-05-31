@@ -456,3 +456,97 @@ async fn e2e_cli_commands_work_in_async_context() {
     // Post-quit: invite fails
     assert!(handle.invite().await.is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Independent bootstrap test: verifies joiner→host message flow with
+// separate Tor bootstraps (same as two separate CLI processes).
+// This is the regression test for nullpipe-2vp.
+// We use spawn_blocking to avoid deadlocking on Tor's directory lock,
+// which is synchronous and would block the single-threaded test runtime.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_independent_bootstrap_joiner_sends_message() {
+    // Use a channel to coordinate between the spawned tasks and the main test
+    let (host_ready_tx, mut host_ready_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let (joiner_ready_tx, mut joiner_ready_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (message_received_tx, mut message_received_rx) = tokio::sync::oneshot::channel::<bool>();
+
+    // Spawn Host in a blocking task to allow independent Tor bootstrap
+    let host_handle = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let (host_h, mut host_ev) = host(HostConfig {
+                name: "host".into(),
+                invite_ttl_secs: 300,
+            });
+            
+            // Wait for RoomReady
+            let mut onion_addr = String::new();
+            while let Some(ev) = host_ev.recv().await {
+                if let ChatEvent::RoomReady { onion_address, .. } = ev {
+                    onion_addr = onion_address;
+                    break;
+                }
+            }
+            
+            let code = host_h.invite().await.expect("host invite");
+            let _ = host_ready_tx.send(code).await;
+
+            // Wait for message from joiner
+            while let Some(ev) = host_ev.recv().await {
+                if let ChatEvent::Message { text, .. } = ev {
+                    if text == "hello from independent joiner" {
+                        let _ = message_received_tx.send(true);
+                        break;
+                    }
+                }
+            }
+            host_h.quit().await;
+        });
+    });
+
+    // Get invite code from host
+    let code = host_ready_rx.recv().await.expect("Host failed to start");
+
+    // Spawn Joiner in a blocking task to allow independent Tor bootstrap
+    let joiner_handle = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let (joiner_h, mut joiner_ev) = join(JoinConfig {
+                name: "joiner".into(),
+                invite_code: code,
+            });
+
+            // Wait for PeerJoin
+            while let Some(ev) = joiner_ev.recv().await {
+                if matches!(ev, ChatEvent::PeerJoin(_)) {
+                    break;
+                }
+            }
+
+            let _ = joiner_ready_tx.send(()).await;
+
+            // Send message
+            joiner_h.send("hello from independent joiner").await.unwrap();
+            
+            // Keep alive long enough for message to send
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            joiner_h.quit().await;
+        });
+    });
+
+    // Wait for joiner to be ready
+    joiner_ready_rx.recv().await.expect("Joiner failed to connect");
+
+    // Wait for host to receive the message (with timeout)
+    let received = tokio::time::timeout(Duration::from_secs(30), message_received_rx)
+        .await
+        .expect("Test timed out waiting for message reception")
+        .unwrap_or(false);
+
+    assert!(received, "BUG nullpipe-2vp: Host never received joiner's message. The joiner's write path is broken across independent Tor bootstraps due to tokio::io::split on DataStream.");
+
+    host_handle.await.unwrap();
+    joiner_handle.await.unwrap();
+}
