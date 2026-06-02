@@ -39,7 +39,6 @@
 
 use arti_client::DataStream;
 use base58::ToBase58;
-use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Duration};
 use tracing::warn;
@@ -293,30 +292,6 @@ impl Joiner {
         })
     }
 
-    /// Arc<Mutex> version of spawn_reader for shared stream access.
-    fn spawn_reader_arc(
-        stream: Arc<tokio::sync::Mutex<DataStream>>,
-        events: mpsc::Sender<ChatEvent>,
-        done_tx: mpsc::Sender<()>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            loop {
-                let frame_result = {
-                    let mut locked = stream.lock().await;
-                    timeout(READ_TIMEOUT, wire::read_frame(&mut *locked)).await
-                };
-                match frame_result {
-                    Ok(Ok(frame)) => {
-                        Self::handle_incoming_frame(&frame, &events).await;
-                    }
-                    Ok(Err(_)) => break,
-                    Err(_) => break,
-                }
-            }
-            let _ = done_tx.send(()).await;
-        })
-    }
-
     /// Inner reader loop: reads frames until error, timeout, or channel close.
     async fn reader_loop<R>(reader: &mut R, events: &mpsc::Sender<ChatEvent>)
     where
@@ -407,57 +382,6 @@ impl Joiner {
         }
     }
 
-    /// Arc<Mutex> version of write_loop for shared stream access.
-    async fn write_loop_arc(
-        stream: Arc<tokio::sync::Mutex<DataStream>>,
-        mut messages: mpsc::Receiver<String>,
-        events: mpsc::Sender<ChatEvent>,
-        mut shutdown: watch::Receiver<()>,
-        reader_done_rx: &mut mpsc::Receiver<()>,
-        name: &str,
-        peer_id: &PeerId,
-    ) -> Result<()> {
-        let mut pending: Vec<ChatEvent> = Vec::new();
-
-        loop {
-            tokio::select! {
-                biased;
-
-                // 1. Shutdown signal — highest priority
-                _ = shutdown.changed() => {
-                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
-                    return Ok(());
-                }
-
-                // 2. Reader task finished (hub disconnected)
-                _ = reader_done_rx.recv() => {
-                    Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
-                    return Ok(());
-                }
-
-                // 3. Outgoing message from the local UI
-                msg = messages.recv() => {
-                    match msg {
-                        Some(text) => {
-                            Self::process_outgoing_message_arc(
-                                &text, name, peer_id, &events, &mut pending, &stream,
-                            ).await?;
-                        }
-                        None => {
-                            Self::drain_and_flush(&mut messages, &events, peer_id, name, &mut pending).await;
-                            return Ok(()); // channel closed
-                        }
-                    }
-                }
-
-                // 4. Event receiver dropped
-                _ = events.closed() => {
-                    return Err(ChatError::Connection("event receiver dropped".into()));
-                }
-            }
-        }
-    }
-
     /// Encode an outgoing chat message, write it to the stream, and
     /// emit a local `ChatEvent::Message` so the UI displays it.
     async fn process_outgoing_message<W>(
@@ -475,28 +399,6 @@ impl Joiner {
         let frame = encode_message(&msg)?;
 
         Self::write_frame(writer, &frame).await?;
-        let event = Self::make_event(peer_id, name, text);
-        Self::try_emit(events, event, pending);
-
-        Ok(())
-    }
-
-    /// Arc<Mutex> version of process_outgoing_message for shared stream access.
-    async fn process_outgoing_message_arc(
-        text: &str,
-        name: &str,
-        peer_id: &PeerId,
-        events: &mpsc::Sender<ChatEvent>,
-        pending: &mut Vec<ChatEvent>,
-        stream: &Arc<tokio::sync::Mutex<DataStream>>,
-    ) -> Result<()> {
-        let msg = WireMessage::chat(name, text);
-        let frame = encode_message(&msg)?;
-
-        {
-            let mut locked = stream.lock().await;
-            Self::write_frame(&mut *locked, &frame).await?;
-        }
         let event = Self::make_event(peer_id, name, text);
         Self::try_emit(events, event, pending);
 

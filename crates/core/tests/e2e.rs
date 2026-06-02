@@ -16,7 +16,7 @@ use base58::FromBase58;
 use ephemeral_chat_core::error::ChatError;
 use ephemeral_chat_core::invite::{decode as decode_invite, encode, InvitePayload};
 use ephemeral_chat_core::types::{ChatEvent, HostConfig, JoinConfig, PeerId, PeerInfo};
-use ephemeral_chat_core::{host, host_with_client, join, join_with_client, SharedTorClient};
+use ephemeral_chat_core::{host, join};
 use tokio::time::timeout;
 
 use std::time::Duration;
@@ -81,6 +81,26 @@ fn as_error(e: &ChatEvent) -> Option<&ChatError> {
         ChatEvent::Error(err) => Some(err),
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test fixture helpers — independent Tor bootstraps per side
+// ---------------------------------------------------------------------------
+
+/// Start a host with its own Tor bootstrap. Caller must wait for RoomReady.
+fn start_host() -> (ephemeral_chat_core::RoomHandle, ephemeral_chat_core::EventStream) {
+    host(HostConfig {
+        name: "host".into(),
+        invite_ttl_secs: 300,
+    })
+}
+
+/// Start a joiner with its own Tor bootstrap using the given invite code.
+fn start_joiner(code: String) -> (ephemeral_chat_core::RoomHandle, ephemeral_chat_core::EventStream) {
+    join(JoinConfig {
+        name: "joiner".into(),
+        invite_code: code,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -154,21 +174,14 @@ async fn e2e_host_generates_valid_invite_code() {
 
 #[tokio::test]
 async fn e2e_joiner_connects_and_peer_join_fires() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-    let (host_h, mut host_ev) = host_with_client(HostConfig {
-        name: "host".into(),
-        invite_ttl_secs: 300,
-    }, &tor);
+    let (host_h, mut host_ev) = start_host();
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
-        name: "joiner".into(),
-        invite_code: code,
-    }, &tor);
+    let (joiner_h, mut joiner_ev) = start_joiner(code);
 
     // Host sees PeerJoin
     let (host_peer, _) = wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
@@ -194,21 +207,14 @@ async fn e2e_joiner_connects_and_peer_join_fires() {
 
 #[tokio::test]
 async fn e2e_messages_flow_bidirectional() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-    let (host_h, mut host_ev) = host_with_client(HostConfig {
-        name: "host".into(),
-        invite_ttl_secs: 300,
-    }, &tor);
+    let (host_h, mut host_ev) = start_host();
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
-        name: "joiner".into(),
-        invite_code: code,
-    }, &tor);
+    let (joiner_h, mut joiner_ev) = start_joiner(code);
 
     wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -244,21 +250,14 @@ async fn e2e_messages_flow_bidirectional() {
 
 #[tokio::test]
 async fn e2e_peer_leave_on_joiner_quit() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-    let (host_h, mut host_ev) = host_with_client(HostConfig {
-        name: "host".into(),
-        invite_ttl_secs: 300,
-    }, &tor);
+    let (host_h, mut host_ev) = start_host();
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
-        name: "joiner".into(),
-        invite_code: code,
-    }, &tor);
+    let (joiner_h, mut joiner_ev) = start_joiner(code);
 
     let (host_peer, _) = wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -287,21 +286,14 @@ async fn e2e_peer_leave_on_joiner_quit() {
 
 #[tokio::test]
 async fn e2e_room_close_notifies_joiner() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-    let (host_h, mut host_ev) = host_with_client(HostConfig {
-        name: "host".into(),
-        invite_ttl_secs: 300,
-    }, &tor);
+    let (host_h, mut host_ev) = start_host();
     wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let (_joiner_h, mut joiner_ev) = join_with_client(JoinConfig {
-        name: "joiner".into(),
-        invite_code: code,
-    }, &tor);
+    let (_joiner_h, mut joiner_ev) = start_joiner(code);
 
     wait_for(&mut host_ev, FULL_TEST_TIMEOUT, peer_join)
         .await
@@ -429,12 +421,7 @@ async fn e2e_host_send_message_no_peers_room_stays_open() {
 
 #[tokio::test]
 async fn e2e_cli_commands_work_in_async_context() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-    let (handle, mut events) = host_with_client(HostConfig {
-        name: "cli-demo".into(),
-        invite_ttl_secs: 300,
-    }, &tor);
-
+    let (handle, mut events) = start_host();
     wait_for(&mut events, BOOTSTRAP_TIMEOUT, room_ready)
         .await
         .expect("RoomReady");
@@ -470,7 +457,7 @@ async fn e2e_independent_bootstrap_joiner_sends_message() {
     // Use a channel to coordinate between the spawned tasks and the main test
     let (host_ready_tx, mut host_ready_rx) = tokio::sync::mpsc::channel::<String>(1);
     let (joiner_ready_tx, mut joiner_ready_rx) = tokio::sync::mpsc::channel::<()>(1);
-    let (message_received_tx, mut message_received_rx) = tokio::sync::oneshot::channel::<bool>();
+    let (message_received_tx, message_received_rx) = tokio::sync::oneshot::channel::<bool>();
 
     // Spawn Host in a blocking task to allow independent Tor bootstrap
     let host_handle = tokio::task::spawn_blocking(move || {
@@ -482,10 +469,10 @@ async fn e2e_independent_bootstrap_joiner_sends_message() {
             });
             
             // Wait for RoomReady
-            let mut onion_addr = String::new();
+            let mut _onion_addr = String::new();
             while let Some(ev) = host_ev.recv().await {
                 if let ChatEvent::RoomReady { onion_address, .. } = ev {
-                    onion_addr = onion_address;
+                    _onion_addr = onion_address;
                     break;
                 }
             }

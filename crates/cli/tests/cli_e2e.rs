@@ -274,9 +274,24 @@ fn cli_version_flag() {
 
 #[test]
 fn cli_host_send_message_no_peers_stays_alive() {
+    // Use a unique temp directory for arti state to avoid lockfile contention
+    // from previous test runs.
+    let state_dir = std::env::temp_dir()
+        .join(format!("ephemeral-chat-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).expect("create test state dir");
+
     // Spawn host in headless mode, wait for bootstrap, send a message via stdin,
     // verify process doesn't exit/crash.
-    let mut child = spawn_chat(&["host", "--headless", "--name", "test"]);
+    let mut child = Command::cargo_bin("chat")
+        .expect("chat binary should exist")
+        .args(["host", "--headless", "--name", "test"])
+        .env("EPHEMERAL_CHAT_STATE_DIR", &state_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn chat binary");
 
     // Wait for Tor bootstrap (~15-30s first run, faster on cache)
     std::thread::sleep(std::time::Duration::from_secs(20));
@@ -323,4 +338,5 @@ fn cli_host_send_message_no_peers_stays_alive() {
 
     let _ = child.kill();
     let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&state_dir);
 }

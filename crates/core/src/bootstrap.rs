@@ -1,6 +1,8 @@
 //! Tor bootstrap wrapper using arti-client.
 
+use arti_client::config::TorClientConfigBuilder;
 use arti_client::{TorClient, TorClientConfig};
+use std::path::PathBuf;
 use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
 use tor_rtcompat::PreferredRuntime;
@@ -36,7 +38,7 @@ impl TorBootstrap {
         }
 
         info!("bootstrapping Tor client");
-        let config = TorClientConfig::default();
+        let config = build_config()?;
 
         // Build an unbootstrapped client so we can subscribe to progress events
         let client = TorClient::builder()
@@ -139,3 +141,49 @@ impl Default for TorBootstrap {
         Self::new()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Config helpers
+// ---------------------------------------------------------------------------
+
+/// Build a TorClientConfig with an isolated arti state directory.
+///
+/// Each process gets its own unique temp directory so concurrent `chat`
+/// instances never contend on state lockfiles.
+///
+/// When `EPHEMERAL_CHAT_STATE_DIR` is set, uses that as the root instead
+/// of the system temp directory (useful for tests that need cleanup).
+fn build_config() -> crate::error::Result<TorClientConfig> {
+    let root = match std::env::var("EPHEMERAL_CHAT_STATE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => std::env::temp_dir().join(format!("ephemeral-chat-{}-{}", std::process::id(), rand::random::<u64>())),
+    };
+    let state_dir = root.join("state");
+    let cache_dir = root.join("cache");
+    std::fs::create_dir_all(&state_dir)
+        .map_err(|e| ChatError::Connection(format!("create state dir: {e}")))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| ChatError::Connection(format!("create cache dir: {e}")))?;
+    // arti's fs_mistrust enforces 0700 on state directories
+    #[cfg(unix)]
+    lock_dir_perms(&root);
+    TorClientConfigBuilder::from_directories(state_dir, cache_dir)
+        .build()
+        .map_err(|e| ChatError::Connection(format!("config build failed: {e}")))
+}
+
+/// Set 0700 permissions on the arti state root and its children.
+/// arti's fs_mistrust rejects directories that are group/other-readable.
+#[cfg(unix)]
+fn lock_dir_perms(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let _ = std::fs::set_permissions(entry.path(), std::fs::Permissions::from_mode(0o700));
+            }
+        }
+    }
+    let _ = std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700));
+}
+
