@@ -144,6 +144,9 @@ impl App {
                     self.peers.push(info.clone());
                 }
                 self.push("system".into(), format!("{} joined", info.name), true);
+                if matches!(self.mode, Mode::Bootstrap { .. }) {
+                    self.mode = Mode::Running;
+                }
             }
             ChatEvent::PeerLeave(pid) => {
                 self.peers.retain(|p| p.id != pid);
@@ -839,6 +842,7 @@ async fn run_headless(name: String, _timestamps: bool, command: &Commands) -> Re
                     }
                     ChatEvent::PeerJoin(info) => {
                         println!("[system] {} joined", info.name);
+                        room_ready = true;
                     }
                     ChatEvent::PeerLeave(pid) => {
                         println!("[system] {} left", pid);
