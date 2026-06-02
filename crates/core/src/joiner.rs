@@ -428,6 +428,7 @@ impl Joiner {
 
     /// Await the reader task handle, swallowing any panic.
     async fn stop_reader(handle: tokio::task::JoinHandle<()>) {
+        handle.abort();
         let _ = handle.await;
     }
 

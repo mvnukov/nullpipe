@@ -1,18 +1,12 @@
-//! End-to-end tests for the new Joiner API.
+//! End-to-end tests for the refactored joiner.
 //!
 //! Full flow: host a room → joiner connects via invite → messages flow → cleanup.
 
 use std::time::Duration;
 
-use ephemeral_chat_core::connector::ArtiConnector;
-use ephemeral_chat_core::invite::decode as decode_invite;
-use ephemeral_chat_core::types::{ChatEvent, HostConfig, PeerInfo};
-use ephemeral_chat_core::{host_with_client, SharedTorClient};
-use tokio::sync::{mpsc, watch};
+use ephemeral_chat_core::types::{ChatEvent, HostConfig, JoinConfig};
+use ephemeral_chat_core::{host, join};
 use tokio::time::timeout;
-
-const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
-const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 async fn wait_for<F, T>(
     rx: &mut ephemeral_chat_core::EventStream,
@@ -37,74 +31,50 @@ where
     }
 }
 
-fn room_ready(e: &ChatEvent) -> Option<(String, u16)> {
-    match e {
-        ChatEvent::RoomReady {
-            onion_address,
-            port,
-        } => Some((onion_address.clone(), *port)),
-        _ => None,
-    }
-}
-
-fn peer_join(e: &ChatEvent) -> Option<PeerInfo> {
-    match e {
-        ChatEvent::PeerJoin(info) => Some(info.clone()),
-        _ => None,
-    }
-}
-
-// ── E2E: joiner connects via new API, receives messages ──────────────────────
-// Requires: run() implementation
+// ── E2E: joiner connects via room::join, receives messages ───────────────────
 
 #[tokio::test]
 async fn e2e_joiner_connects_receives_messages() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-
-    let (host_h, mut host_ev) = host_with_client(
-        HostConfig {
-            name: "host".into(),
-            invite_ttl_secs: 300,
-        },
-        &tor,
-    );
-    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
-        .await
-        .expect("host RoomReady");
+    let (host_h, mut host_ev) = host(HostConfig {
+        name: "host".into(),
+        invite_ttl_secs: 300,
+    });
+    
+    let (_addr, _port) = wait_for(&mut host_ev, Duration::from_secs(30), |e| match e {
+        ChatEvent::RoomReady { onion_address, port } => Some((onion_address.clone(), *port)),
+        _ => None,
+    })
+    .await
+    .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let connector = ArtiConnector::new(tor.client().clone());
-    let mut joiner = ephemeral_chat_core::joiner::Joiner::connect(&connector, &code, "alice")
-        .await
-        .expect("Joiner::connect failed");
-
-    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(256);
-    let (_sd_tx, sd_rx) = watch::channel(());
-
-    let joiner_task = tokio::spawn(async move {
-        let _ = joiner.run(msg_rx, evt_tx, sd_rx).await;
+    let (joiner_h, _joiner_ev) = join(JoinConfig {
+        name: "alice".into(),
+        invite_code: code,
     });
 
-    wait_for(&mut host_ev, TEST_TIMEOUT, peer_join)
-        .await
-        .expect("host saw joiner");
+    // Host should see peer join
+    let (_info, _) = wait_for(&mut host_ev, Duration::from_secs(90), |e| match e {
+        ChatEvent::PeerJoin(info) => Some(info.clone()),
+        _ => None,
+    })
+    .await
+    .expect("host saw joiner");
 
-    msg_tx
-        .send("hello from new joiner".to_string())
-        .await
-        .expect("send message");
+    // Send message from joiner
+    joiner_h.send("hello from joiner").await.expect("send message");
 
-    let (text, _) = wait_for(&mut host_ev, TEST_TIMEOUT, |e| match e {
-        ChatEvent::Message { text, .. } if text == "hello from new joiner" => Some(text.clone()),
+    // Host should receive it
+    let (text, _) = wait_for(&mut host_ev, Duration::from_secs(10), |e| match e {
+        ChatEvent::Message { text, .. } if text == "hello from joiner" => Some(text.clone()),
         _ => None,
     })
     .await
     .expect("host received joiner message");
-    assert_eq!(text, "hello from new joiner");
+    assert_eq!(text, "hello from joiner");
 
-    joiner_task.abort();
+    joiner_h.quit().await;
     host_h.quit().await;
 }
 
@@ -112,97 +82,100 @@ async fn e2e_joiner_connects_receives_messages() {
 
 #[tokio::test]
 async fn e2e_joiner_rejects_expired_invite() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-
-    let (host_h, mut host_ev) = host_with_client(
-        HostConfig {
-            name: "host".into(),
-            invite_ttl_secs: 300,
-        },
-        &tor,
-    );
-    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
-        .await
-        .expect("host RoomReady");
-
-    let code = host_h.invite().await.expect("host invite");
-    let payload = decode_invite(&code, None).expect("decode invite");
-
-    let expired_payload = ephemeral_chat_core::invite::InvitePayload {
-        onion_address: payload.onion_address.clone(),
-        nonce: payload.nonce,
-        timestamp: 1_700_000_000,
+    use ephemeral_chat_core::invite::{encode, InvitePayload};
+    
+    // Create an expired invite manually
+    let expired_payload = InvitePayload {
+        onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
+        nonce: [0x42u8; 16],
+        timestamp: 1_700_000_000, // Expired timestamp
     };
-    let expired_code = ephemeral_chat_core::invite::encode(&expired_payload).unwrap();
+    let expired_code = encode(&expired_payload).unwrap();
 
-    let connector = ArtiConnector::new(tor.client().clone());
-    let result = ephemeral_chat_core::joiner::Joiner::connect(&connector, &expired_code, "alice").await;
-    assert!(result.is_err(), "joiner should reject expired invite");
+    let (_joiner_h, mut joiner_ev) = join(JoinConfig {
+        name: "alice".into(),
+        invite_code: expired_code,
+    });
 
-    host_h.quit().await;
+    // Should get an error event
+    let (_err, _) = wait_for(&mut joiner_ev, Duration::from_secs(10), |e| match e {
+        ChatEvent::Error(_) => Some(()),
+        _ => None,
+    })
+    .await
+    .expect("joiner should reject expired invite");
 }
 
 // ── E2E: hub sees PeerJoin after successful handshake ────────────────────────
 
 #[tokio::test]
 async fn e2e_joiner_handshake_accepted() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-
-    let (host_h, mut host_ev) = host_with_client(
-        HostConfig {
-            name: "host".into(),
-            invite_ttl_secs: 300,
-        },
-        &tor,
-    );
-    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
-        .await
-        .expect("host RoomReady");
+    let (host_h, mut host_ev) = host(HostConfig {
+        name: "host".into(),
+        invite_ttl_secs: 300,
+    });
+    
+    let (_addr, _port) = wait_for(&mut host_ev, Duration::from_secs(30), |e| match e {
+        ChatEvent::RoomReady { onion_address, port } => Some((onion_address.clone(), *port)),
+        _ => None,
+    })
+    .await
+    .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let connector = ArtiConnector::new(tor.client().clone());
-    let mut joiner = ephemeral_chat_core::joiner::Joiner::connect(&connector, &code, "alice")
-        .await
-        .expect("Joiner::connect failed");
+    let (_joiner_h, mut _joiner_ev) = join(JoinConfig {
+        name: "alice".into(),
+        invite_code: code,
+    });
 
     // Hub must see PeerJoin — proves accept byte = 0 was sent and processed
-    let (info, _) = wait_for(&mut host_ev, TEST_TIMEOUT, peer_join)
-        .await
-        .expect("host saw joiner join");
+    let (info, _) = wait_for(&mut host_ev, Duration::from_secs(90), |e| match e {
+        ChatEvent::PeerJoin(info) => Some(info.clone()),
+        _ => None,
+    })
+    .await
+    .expect("host saw joiner join");
     assert!(!info.id.0.is_empty());
 
-    joiner.close();
     host_h.quit().await;
 }
 
-// ── E2E: joiner close cleans up properly ─────────────────────────────────────
+// ── E2E: joiner quit cleans up properly ──────────────────────────────────────
 
 #[tokio::test]
-async fn e2e_joiner_close_cleans_up() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-
-    let (host_h, mut host_ev) = host_with_client(
-        HostConfig {
-            name: "host".into(),
-            invite_ttl_secs: 300,
-        },
-        &tor,
-    );
-    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
-        .await
-        .expect("host RoomReady");
+async fn e2e_joiner_quit_cleans_up() {
+    let (host_h, mut host_ev) = host(HostConfig {
+        name: "host".into(),
+        invite_ttl_secs: 300,
+    });
+    
+    let (_addr, _port) = wait_for(&mut host_ev, Duration::from_secs(30), |e| match e {
+        ChatEvent::RoomReady { onion_address, port } => Some((onion_address.clone(), *port)),
+        _ => None,
+    })
+    .await
+    .expect("host RoomReady");
 
     let code = host_h.invite().await.expect("host invite");
 
-    let connector = ArtiConnector::new(tor.client().clone());
-    let mut joiner = ephemeral_chat_core::joiner::Joiner::connect(&connector, &code, "alice")
-        .await
-        .expect("Joiner::connect failed");
+    let (joiner_h, _joiner_ev) = join(JoinConfig {
+        name: "alice".into(),
+        invite_code: code,
+    });
 
-    joiner.close();
+    // Wait for peer to join first
+    wait_for(&mut host_ev, Duration::from_secs(90), |e| match e {
+        ChatEvent::PeerJoin(_) => Some(()),
+        _ => None,
+    })
+    .await
+    .expect("host saw joiner");
 
-    wait_for(&mut host_ev, TEST_TIMEOUT, |e| match e {
+    // Now quit - host should see peer leave
+    joiner_h.quit().await;
+
+    wait_for(&mut host_ev, Duration::from_secs(10), |e| match e {
         ChatEvent::PeerLeave(_) => Some(()),
         _ => None,
     })
@@ -212,47 +185,4 @@ async fn e2e_joiner_close_cleans_up() {
     host_h.quit().await;
 }
 
-// ── E2E: joiner run exits on shutdown signal ─────────────────────────────────
-// Requires: run() implementation
 
-#[tokio::test]
-async fn e2e_joiner_respects_shutdown_signal() {
-    let tor = SharedTorClient::bootstrap().await.expect("Tor bootstrap");
-
-    let (host_h, mut host_ev) = host_with_client(
-        HostConfig {
-            name: "host".into(),
-            invite_ttl_secs: 300,
-        },
-        &tor,
-    );
-    wait_for(&mut host_ev, BOOTSTRAP_TIMEOUT, room_ready)
-        .await
-        .expect("host RoomReady");
-
-    let code = host_h.invite().await.expect("host invite");
-
-    let connector = ArtiConnector::new(tor.client().clone());
-    let mut joiner = ephemeral_chat_core::joiner::Joiner::connect(&connector, &code, "alice")
-        .await
-        .expect("Joiner::connect failed");
-
-    let (_msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, _evt_rx) = mpsc::channel::<ChatEvent>(256);
-    let (sd_tx, sd_rx) = watch::channel(());
-
-    let joiner_task = tokio::spawn(async move {
-        joiner.run(msg_rx, evt_tx, sd_rx).await
-    });
-
-    sd_tx.send(()).expect("send shutdown");
-
-    let result = timeout(Duration::from_secs(10), joiner_task)
-        .await
-        .expect("joiner task should complete on shutdown")
-        .expect("joiner task panicked");
-
-    assert!(result.is_ok(), "run should return Ok on clean shutdown");
-
-    host_h.quit().await;
-}

@@ -2,9 +2,9 @@
 
 use arti_client::config::TorClientConfigBuilder;
 use arti_client::{TorClient, TorClientConfig};
-use std::path::PathBuf;
 use futures::{Stream, StreamExt};
-use tokio::sync::mpsc;
+use std::path::PathBuf;
+use tokio::sync::{mpsc, watch};
 use tor_rtcompat::PreferredRuntime;
 use tracing::{error, info};
 
@@ -133,6 +133,59 @@ impl TorBootstrap {
     /// Whether the client is bootstrapped.
     pub fn is_bootstrapped(&self) -> bool {
         self.bootstrapped
+    }
+}
+
+/// Bootstrap Tor with shutdown monitoring and progress event forwarding.
+///
+/// Returns `None` if shutdown was requested during bootstrap or bootstrap failed.
+pub async fn bootstrap_with_shutdown(
+    event_tx: &mut mpsc::Sender<ChatEvent>,
+    shutdown_rx: &mut watch::Receiver<()>,
+) -> Option<TorBootstrap> {
+    let mut bootstrap = TorBootstrap::new();
+    let mut event_stream = match bootstrap.bootstrap().await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = event_tx.send(ChatEvent::Error(e)).await;
+            return None;
+        }
+    };
+
+    let mut bootstrap_ok = false;
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = shutdown_rx.changed() => {
+                info!("bootstrap: shutdown during bootstrap");
+                bootstrap.shutdown();
+                return None;
+            }
+
+            event = event_stream.next() => {
+                match event {
+                    Some(e) => {
+                        if matches!(&e, ChatEvent::BootstrapProgress(100)) {
+                            bootstrap_ok = true;
+                        }
+                        if event_tx.send(e).await.is_err() {
+                            bootstrap.shutdown();
+                            return None;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    if bootstrap_ok {
+        Some(bootstrap)
+    } else {
+        bootstrap.shutdown();
+        None
     }
 }
 

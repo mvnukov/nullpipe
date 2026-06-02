@@ -13,5 +13,5 @@ pub use error::{ChatError, Result};
 pub use hub::{HostedRoom, Hub};
 pub use invite::{decode as decode_invite, encode as encode_invite, InvitePayload};
 pub use joiner::Joiner;
-pub use room::{host, host_with_client, join, join_with_client, EventStream, RoomHandle, SharedTorClient};
+pub use room::{host, join, EventStream, RoomHandle};
 pub use types::*;
