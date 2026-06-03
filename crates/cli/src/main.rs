@@ -926,6 +926,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires real Tor bootstrap (~16s); move to cli_e2e suite if needed"]
     async fn second_send_with_no_peers_works() {
         let (handle, mut ev_rx) = ephemeral_chat_core::host(HostConfig {
             name: "tester".into(),

@@ -1124,7 +1124,9 @@ mod tests {
         let (writer_tx, _writer_rx) = mpsc::unbounded_channel();
         let reg = Arc::new(PeerRegistry::new());
 
-        let (_input, reader) = duplex(64);
+        let (mut input, reader) = duplex(64);
+        // Signal EOF immediately — without this reader_task waits for READ_TIMEOUT (60s)
+        input.shutdown().await.unwrap();
 
         // Reader on an empty closed stream should not panic
         Hub::reader_task(

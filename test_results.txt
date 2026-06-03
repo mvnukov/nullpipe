@@ -1,14 +1,223 @@
-warning: in config file .config/nextest.toml, ignoring unknown configuration key: profile.default.timeout
-   Compiling ephemeral-chat-core v0.1.0 (/Users/mikhail/Workspace/nullpipe/crates/core)
-warning: function `read_message` is never used
-   --> crates/core/src/wire.rs:181:14
+[Running 'cargo nextest run  -E 'not binary(~e2e)'']
+warning: unused variable: `cmd`
+   --> crates/cli/src/main.rs:248:21
     |
-181 | pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMessage> {
-    |              ^^^^^^^^^^^^
+248 |         if let Some(cmd) = text.strip_prefix('/') {
+    |                     ^^^ help: if this is intentional, prefix it with an underscore: `_cmd`
     |
-    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
-warning: `ephemeral-chat-core` (lib) generated 1 warning
+warning: `ephemeral-chat` (bin "chat") generated 1 warning (run `cargo fix --bin "chat" -p ephemeral-chat` to apply 1 suggestion)
+warning: unused import: `BufRead`
+   --> crates/cli/tests/cli_e2e.rs:353:26
+    |
+353 |     use std::io::{Write, BufRead, BufReader};
+    |                          ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `host_reader`
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_host_reader`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `invite_code`
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_invite_code`
+
+warning: `ephemeral-chat` (test "cli_e2e") generated 5 warnings (run `cargo fix --test "cli_e2e" -p ephemeral-chat` to apply 5 suggestions)
+warning: `ephemeral-chat` (bin "chat" test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+────────────
+ Nextest run ID d40fbffc-25e1-4fd2-a03e-68733ad92311 with nextest profile: default
+    Starting 158 tests across 5 binaries (3 binaries skipped)
+        PASS [   0.011s] (  1/158) ephemeral-chat::cli_unit bootstrap_to_running_transition
+        PASS [   0.012s] (  2/158) ephemeral-chat::cli_unit ctrl_c_detection
+        PASS [   0.012s] (  3/158) ephemeral-chat::cli_unit cli_args_host_command
+        PASS [   0.013s] (  4/158) ephemeral-chat::cli_unit input_cursor_bounds
+        PASS [   0.013s] (  5/158) ephemeral-chat::cli_unit empty_input_no_dispatch
+        PASS [   0.013s] (  6/158) ephemeral-chat::cli_unit display_message_timestamp_handling
+        PASS [   0.013s] (  7/158) ephemeral-chat::cli_unit command_parsing_routes_correctly
+        PASS [   0.014s] (  8/158) ephemeral-chat::cli_unit command_channel_not_ready
+        PASS [   0.014s] (  9/158) ephemeral-chat::cli_unit dispatch_command_uses_spawn_not_block_on
+        PASS [   0.015s] ( 10/158) ephemeral-chat::cli_unit command_prefix_stripping
+        PASS [   0.016s] ( 11/158) ephemeral-chat::cli_unit cmd_result_handling
+        PASS [   0.012s] ( 12/158) ephemeral-chat::cli_unit invite_before_room_ready
+        PASS [   0.012s] ( 13/158) ephemeral-chat::cli_unit non_slash_input_not_command
+        PASS [   0.012s] ( 14/158) ephemeral-chat::cli_unit peer_info_display_formatting
+        PASS [   0.011s] ( 15/158) ephemeral-chat::cli_unit scroll_bounds
+        PASS [   0.012s] ( 16/158) ephemeral-chat::cli_unit room_handle_quit_idempotent
+        PASS [   0.012s] ( 17/158) ephemeral-chat::cli_unit room_handle_methods_without_tor
+        PASS [   0.012s] ( 18/158) ephemeral-chat::cli_unit shutdown_state_locks_input
+        PASS [   0.011s] ( 19/158) ephemeral-chat::bin/chat tests::ctrl_c_sets_quit
+        PASS [   0.010s] ( 20/158) ephemeral-chat::bin/chat tests::typing_and_sending_does_not_quit
+        PASS [   0.027s] ( 21/158) ephemeral-chat::cli_unit dispatch_command_no_panic_in_runtime
+        PASS [   0.015s] ( 22/158) ephemeral-chat::cli_unit rapid_successive_commands
+        PASS [   0.012s] ( 23/158) ephemeral-chat::bin/chat tests::typing_individual_chars_does_not_quit
+        PASS [   0.012s] ( 24/158) ephemeral-chat-core factory::tests::create_with_join_config_returns_handle_and_stream
+        PASS [   0.012s] ( 25/158) ephemeral-chat-core factory::tests::create_with_host_config_returns_handle_and_stream
+        PASS [   0.011s] ( 26/158) ephemeral-chat-core factory::tests::room_config_is_clone_debug
+        PASS [   0.012s] ( 27/158) ephemeral-chat-core factory::tests::factory_is_default
+        PASS [   0.013s] ( 28/158) ephemeral-chat-core hub::tests::broadcast_capacity_is_256
+        PASS [   0.012s] ( 29/158) ephemeral-chat-core hub::tests::deregister_peer_emits_peer_leave_event
+        PASS [   0.012s] ( 30/158) ephemeral-chat-core hub::tests::deregister_peer_removes_from_registry
+        PASS [   0.013s] ( 31/158) ephemeral-chat-core hub::tests::deregister_peer_deregistering_unknown_is_noop
+        PASS [   0.012s] ( 32/158) ephemeral-chat-core hub::tests::handshake_accepts_valid_nonce
+        PASS [   0.012s] ( 33/158) ephemeral-chat-core hub::tests::handshake_len_is_32_bytes
+        PASS [   0.012s] ( 34/158) ephemeral-chat-core hub::tests::handshake_rejects_reused_nonce
+        PASS [   0.012s] ( 35/158) ephemeral-chat-core hub::tests::handshake_writes_ack_on_success
+        PASS [   0.012s] ( 36/158) ephemeral-chat-core hub::tests::handshake_writes_nack_on_bad_length
+        PASS [   0.014s] ( 37/158) ephemeral-chat-core hub::tests::handshake_nonce_is_consumed_on_success
+        PASS [   0.014s] ( 38/158) ephemeral-chat-core hub::tests::handshake_rejects_wrong_length
+        PASS [   0.012s] ( 39/158) ephemeral-chat-core hub::tests::nonce_set_rejects_duplicates
+        PASS [   0.012s] ( 40/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_all_delivers_to_each_peer
+        PASS [   0.013s] ( 41/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_skips_deregistered_peers
+        PASS [   0.013s] ( 42/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_empty_registry_no_panic
+        PASS [   0.015s] ( 43/158) ephemeral-chat-core hub::tests::handshake_writes_nack_on_rejected_nonce
+        PASS [   0.015s] ( 44/158) ephemeral-chat-core hub::tests::peer_registry_deregister_decrements_len
+        PASS [   0.011s] ( 45/158) ephemeral-chat-core hub::tests::peer_registry_deregister_unknown_is_noop
+        PASS [   0.012s] ( 46/158) ephemeral-chat-core hub::tests::peer_registry_len_starts_at_zero
+        PASS [   0.011s] ( 47/158) ephemeral-chat-core hub::tests::peer_registry_register_and_deregister_toggle
+        PASS [   0.011s] ( 48/158) ephemeral-chat-core hub::tests::peer_registry_register_increments_len
+        PASS [   0.014s] ( 49/158) ephemeral-chat-core hub::tests::peer_registry_deregister_empty_registry_no_panic
+        PASS [   0.011s] ( 50/158) ephemeral-chat-core hub::tests::peer_registry_register_same_id_twice_overwrites
+        PASS [   0.012s] ( 51/158) ephemeral-chat-core hub::tests::peer_registry_register_multiple_peers
+        PASS [   0.011s] ( 52/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_includes_joined_at
+        PASS [   0.013s] ( 53/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_empty_registry
+        PASS [   0.011s] ( 54/158) ephemeral-chat-core hub::tests::read_timeout_is_60_secs
+        PASS [   0.014s] ( 55/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_returns_all_peers
+        PASS [   0.013s] ( 56/158) ephemeral-chat-core hub::tests::reader_task_forwards_chat_message
+        PASS [   0.011s] ( 57/158) ephemeral-chat-core hub::tests::register_peer_emits_peer_join_event
+        PASS [   0.012s] ( 58/158) ephemeral-chat-core hub::tests::register_peer_adds_to_registry
+        PASS [   0.013s] ( 59/158) ephemeral-chat-core hub::tests::reader_task_responds_to_ping_with_pong
+        PASS [   0.011s] ( 60/158) ephemeral-chat-core hub::tests::register_peer_returns_tx_rx_pair
+        PASS [   0.010s] ( 61/158) ephemeral-chat-core hub::tests::write_timeout_is_30_secs
+        PASS [   0.012s] ( 62/158) ephemeral-chat-core hub::tests::reader_task_stops_on_malformed_data
+        PASS [   0.013s] ( 63/158) ephemeral-chat-core hub::tests::writer_task_exits_when_all_channels_closed
+        PASS [   0.012s] ( 64/158) ephemeral-chat-core hub::tests::writer_task_writes_from_broadcast_channel
+        PASS [   0.012s] ( 65/158) ephemeral-chat-core hub::tests::writer_task_writes_from_direct_channel
+        PASS [   0.012s] ( 66/158) ephemeral-chat-core invite::tests::decode_empty_string
+        PASS [   0.011s] ( 67/158) ephemeral-chat-core invite::tests::decode_garbage_too_short
+        PASS [   0.010s] ( 68/158) ephemeral-chat-core invite::tests::decode_invalid_base58
+        PASS [   0.010s] ( 69/158) ephemeral-chat-core invite::tests::decode_short_address
+        PASS [   0.010s] ( 70/158) ephemeral-chat-core invite::tests::expired_invite
+        PASS [   0.013s] ( 71/158) ephemeral-chat-core invite::tests::decode_non_onion_address
+        PASS [   0.014s] ( 72/158) ephemeral-chat-core invite::tests::different_nonce_different_token
+        PASS [   0.011s] ( 73/158) ephemeral-chat-core invite::tests::future_beyond_skew_rejected
+        PASS [   0.012s] ( 74/158) ephemeral-chat-core invite::tests::fresh_invite_with_ttl
+        PASS [   0.011s] ( 75/158) ephemeral-chat-core invite::tests::future_within_skew_accepted
+        PASS [   0.010s] ( 76/158) ephemeral-chat-core invite::tests::roundtrip_basic
+        PASS [   0.011s] ( 77/158) ephemeral-chat-core invite::tests::roundtrip_ff_nonce
+        PASS [   0.011s] ( 78/158) ephemeral-chat-core invite::tests::roundtrip_zero_nonce
+        PASS [   0.012s] ( 79/158) ephemeral-chat-core invite::tests::roundtrip_past_timestamp
+        PASS [   0.013s] ( 80/158) ephemeral-chat-core invite::tests::no_ttl_skips_expiry
+        PASS [   0.011s] ( 81/158) ephemeral-chat-core invite::tests::token_is_contiguous_no_whitespace
+        PASS [   0.011s] ( 82/158) ephemeral-chat-core invite::tests::token_is_deterministic
+        PASS [   0.011s] ( 83/158) ephemeral-chat-core invite::tests::ttl_zero_skips_expiry
+        PASS [   0.011s] ( 84/158) ephemeral-chat-core joiner::tests::close_is_idempotent
+        PASS [   0.012s] ( 85/158) ephemeral-chat-core joiner::tests::connect_calls_tor_with_correct_target
+        PASS [   0.012s] ( 86/158) ephemeral-chat-core joiner::tests::connect_rejects_empty_invite
+        PASS [   0.012s] ( 87/158) ephemeral-chat-core joiner::tests::connect_rejects_expired_invite
+        PASS [   0.014s] ( 88/158) ephemeral-chat-core joiner::tests::connect_propagates_tor_error
+        PASS [   0.011s] ( 89/158) ephemeral-chat-core joiner::tests::connect_rejects_garbage_invite
+        PASS [   0.013s] ( 90/158) ephemeral-chat-core joiner::tests::connect_rejects_invite_with_bad_onion_address
+        PASS [   0.012s] ( 91/158) ephemeral-chat-core joiner::tests::drop_calls_close
+        PASS [   0.013s] ( 92/158) ephemeral-chat-core joiner::tests::connect_rejects_truncated_invite
+        PASS [   0.013s] ( 93/158) ephemeral-chat-core joiner::tests::handshake_accept_returns_peer_id
+        PASS [   0.012s] ( 94/158) ephemeral-chat-core joiner::tests::handshake_reject_returns_error
+        PASS [   0.014s] ( 95/158) ephemeral-chat-core joiner::tests::handshake_invite_nonce_enables_duplicate_detection
+        PASS [   0.013s] ( 96/158) ephemeral-chat-core joiner::tests::handshake_sends_provided_nonce_on_wire
+        PASS [   0.012s] ( 97/158) ephemeral-chat-core joiner::tests::run_exits_when_event_receiver_dropped
+        PASS [   0.012s] ( 98/158) ephemeral-chat-core joiner::tests::run_exits_when_message_channel_closes
+        PASS [   0.009s] ( 99/158) ephemeral-chat-core joiner::tests::run_shutdown_while_message_in_flight
+        PASS [   0.009s] (100/158) ephemeral-chat-core joiner::tests::run_rapid_message_then_shutdown
+        PASS [   0.009s] (101/158) ephemeral-chat-core room::tests::chat_event_variants_are_pub
+        PASS [   0.010s] (102/158) ephemeral-chat-core room::tests::event_stream_ends_on_sender_drop
+        PASS [   0.009s] (103/158) ephemeral-chat-core room::tests::event_stream_is_receiver
+        PASS [   0.008s] (104/158) ephemeral-chat-core room::tests::host_config_and_join_config_exist
+        PASS [   0.009s] (105/158) ephemeral-chat-core room::tests::quit_is_idempotent
+        PASS [   0.009s] (106/158) ephemeral-chat-core room::tests::invite_on_joiner_fails
+        PASS [   0.009s] (107/158) ephemeral-chat-core room::tests::room_handle_is_send_sync
+        PASS [   0.009s] (108/158) ephemeral-chat-core room::tests::room_handle_is_clone
+        PASS [   0.009s] (109/158) ephemeral-chat-core wire::tests::header_is_big_endian
+        PASS [   0.009s] (110/158) ephemeral-chat-core room::tests::send_after_quit_fails
+        PASS [   0.009s] (111/158) ephemeral-chat-core wire::tests::malformed_json_rejected
+        PASS [   0.009s] (112/158) ephemeral-chat-core wire::tests::oversized_decode_rejected
+        PASS [   0.010s] (113/158) ephemeral-chat-core wire::tests::read_frame_complete
+        PASS [   0.010s] (114/158) ephemeral-chat-core wire::tests::oversized_encode_rejected
+        PASS [   0.009s] (115/158) ephemeral-chat-core wire::tests::roundtrip_ping_pong
+        PASS [   0.009s] (116/158) ephemeral-chat-core wire::tests::roundtrip_chat
+        PASS [   0.009s] (117/158) ephemeral-chat-core wire::tests::roundtrip_system
+        PASS [   0.009s] (118/158) ephemeral-chat-core wire::tests::roundtrip_unicode
+        PASS [   0.114s] (119/158) ephemeral-chat-core joiner::tests::run_exits_on_immediate_shutdown
+        PASS [   0.115s] (120/158) ephemeral-chat-core joiner::tests::run_emits_correct_peer_name
+        PASS [   0.114s] (121/158) ephemeral-chat-core joiner::tests::run_exits_on_shutdown_after_delay
+        PASS [   0.009s] (122/158) ephemeral-chat-core wire::tests::short_data_rejected
+        PASS [   0.009s] (123/158) ephemeral-chat-core wire::tests::truncated_payload_rejected
+        PASS [   0.113s] (124/158) ephemeral-chat-core joiner::tests::run_forwards_messages_to_events
+        PASS [   0.114s] (125/158) ephemeral-chat-core joiner::tests::run_handles_long_message
+        PASS [   0.114s] (126/158) ephemeral-chat-core joiner::tests::run_handles_empty_message
+        PASS [   0.112s] (127/158) ephemeral-chat-core joiner::tests::run_handles_unicode_message
+        PASS [   0.010s] (128/158) ephemeral-chat-core wire::tests::write_frame_roundtrip
+        PASS [   0.009s] (129/158) ephemeral-chat-core::joiner_integration close_is_idempotent
+        PASS [   0.009s] (130/158) ephemeral-chat-core::joiner_integration connect_calls_tor_with_correct_target
+        PASS [   0.008s] (131/158) ephemeral-chat-core::joiner_integration connect_propagates_tor_error
+        PASS [   0.008s] (132/158) ephemeral-chat-core::joiner_integration connect_rejects_empty_invite
+        PASS [   0.008s] (133/158) ephemeral-chat-core::joiner_integration connect_rejects_garbage_invite
+        PASS [   0.009s] (134/158) ephemeral-chat-core::joiner_integration connect_rejects_expired_invite
+        PASS [   0.008s] (135/158) ephemeral-chat-core::joiner_integration connect_rejects_invite_with_bad_onion_address
+        PASS [   0.008s] (136/158) ephemeral-chat-core::joiner_integration drop_calls_close
+        PASS [   0.008s] (137/158) ephemeral-chat-core::joiner_integration connect_rejects_truncated_invite
+        PASS [   0.008s] (138/158) ephemeral-chat-core::joiner_integration run_exits_on_immediate_shutdown
+        PASS [   0.008s] (139/158) ephemeral-chat-core::joiner_integration run_exits_when_event_receiver_dropped
+        PASS [   0.008s] (140/158) ephemeral-chat-core::joiner_integration run_exits_when_message_channel_closes
+        PASS [   0.212s] (141/158) ephemeral-chat-core joiner::tests::run_forwards_multiple_messages_in_order
+        PASS [   0.110s] (142/158) ephemeral-chat-core::joiner_integration run_emits_peer_name_in_events
+        PASS [   0.111s] (143/158) ephemeral-chat-core::joiner_integration run_exits_on_shutdown_after_delay
+        LEAK [   0.212s] (144/158) ephemeral-chat-core wire::tests::zero_length_rejected
+        PASS [   0.112s] (145/158) ephemeral-chat-core::joiner_integration run_forwards_single_message_to_events
+        PASS [   0.011s] (146/158) ephemeral-chat-core::joiner_integration run_rapid_messages_then_shutdown
+        PASS [   0.010s] (147/158) ephemeral-chat-core::joiner_integration run_shutdown_while_message_in_flight
+        PASS [   0.112s] (148/158) ephemeral-chat-core::joiner_integration run_handles_empty_message
+        PASS [   0.111s] (149/158) ephemeral-chat-core::joiner_integration run_handles_long_message
+        PASS [   0.210s] (150/158) ephemeral-chat-core::joiner_integration run_forwards_messages_in_order
+        PASS [   0.113s] (151/158) ephemeral-chat-core::joiner_integration run_handles_unicode_message
+        PASS [   0.520s] (152/158) ephemeral-chat-core::integration integration_room_close_notifies_joiner
+        PASS [   1.017s] (153/158) ephemeral-chat-core::integration integration_host_send_message_no_peers
+        PASS [   1.015s] (154/158) ephemeral-chat-core::integration integration_peer_leave_on_joiner_quit
+        PASS [   1.016s] (155/158) ephemeral-chat-core::integration integration_peer_join_fires
+        PASS [   1.517s] (156/158) ephemeral-chat-core::integration integration_messages_flow_bidirectional
+        PASS [  18.398s] (157/158) ephemeral-chat::bin/chat tests::second_send_with_no_peers_works
+        SLOW [> 60.000s] (───────) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
+        PASS [  60.015s] (158/158) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
+────────────
+     Summary [  60.076s] 158 tests run: 158 passed (1 slow, 1 leaky), 0 skipped
+[Finished running. Exit status: 0]
+[Running 'cargo nextest run  -E 'not binary(~e2e)'']
+   Compiling ephemeral-chat-core v0.1.0 (/Users/mikhail/Workspace/nullpipe/crates/core)
    Compiling ephemeral-chat v0.1.0 (/Users/mikhail/Workspace/nullpipe/crates/cli)
 warning: unused import: `BufRead`
    --> crates/cli/tests/cli_e2e.rs:353:26
@@ -50,237 +259,452 @@ warning: unused variable: `invite_code`
 378 |     let mut invite_code = String::new();
     |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_invite_code`
 
+warning: `ephemeral-chat` (test "cli_e2e") generated 5 warnings (run `cargo fix --test "cli_e2e" -p ephemeral-chat` to apply 5 suggestions)
 warning: unused variable: `cmd`
-   --> crates/cli/src/main.rs:247:21
+   --> crates/cli/src/main.rs:248:21
     |
-247 |         if let Some(cmd) = text.strip_prefix('/') {
+248 |         if let Some(cmd) = text.strip_prefix('/') {
     |                     ^^^ help: if this is intentional, prefix it with an underscore: `_cmd`
     |
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
-warning: `ephemeral-chat` (test "cli_e2e") generated 5 warnings (run `cargo fix --test "cli_e2e" -p ephemeral-chat` to apply 5 suggestions)
-warning: `ephemeral-chat-core` (lib test) generated 1 warning (1 duplicate)
 warning: `ephemeral-chat` (bin "chat" test) generated 1 warning (run `cargo fix --bin "chat" -p ephemeral-chat --tests` to apply 1 suggestion)
 warning: `ephemeral-chat` (bin "chat") generated 1 warning (1 duplicate)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.89s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.44s
 ────────────
- Nextest run ID 4fee6000-1f5d-419b-a792-3d042cddea8b with nextest profile: default
-    Starting 187 tests across 8 binaries
-        PASS [   1.017s] (  1/187) ephemeral-chat::cli_e2e cli_force_kill_exit
-        PASS [   1.216s] (  2/187) ephemeral-chat::cli_e2e cli_no_args_shows_usage
-        PASS [   1.219s] (  3/187) ephemeral-chat::cli_e2e cli_host_help_works
-        PASS [   1.219s] (  4/187) ephemeral-chat::cli_e2e cli_help_works
-        PASS [   0.010s] (  5/187) ephemeral-chat::cli_unit bootstrap_to_running_transition
-        PASS [   0.012s] (  6/187) ephemeral-chat::cli_e2e cli_version_flag
-        PASS [   0.010s] (  7/187) ephemeral-chat::cli_unit cli_args_host_command
-        PASS [   0.010s] (  8/187) ephemeral-chat::cli_unit cmd_result_handling
-        PASS [   0.009s] (  9/187) ephemeral-chat::cli_unit command_channel_not_ready
-        PASS [   0.009s] ( 10/187) ephemeral-chat::cli_unit command_parsing_routes_correctly
-        PASS [   0.009s] ( 11/187) ephemeral-chat::cli_unit command_prefix_stripping
-        PASS [   0.009s] ( 12/187) ephemeral-chat::cli_unit ctrl_c_detection
-        PASS [   0.009s] ( 13/187) ephemeral-chat::cli_unit dispatch_command_uses_spawn_not_block_on
-        PASS [   0.009s] ( 14/187) ephemeral-chat::cli_unit display_message_timestamp_handling
-        PASS [   0.021s] ( 15/187) ephemeral-chat::cli_unit dispatch_command_no_panic_in_runtime
-        PASS [   0.009s] ( 16/187) ephemeral-chat::cli_unit empty_input_no_dispatch
-        PASS [   0.008s] ( 17/187) ephemeral-chat::cli_unit input_cursor_bounds
-        PASS [   0.009s] ( 18/187) ephemeral-chat::cli_unit invite_before_room_ready
-        PASS [   0.008s] ( 19/187) ephemeral-chat::cli_unit non_slash_input_not_command
-        PASS [   0.009s] ( 20/187) ephemeral-chat::cli_unit peer_info_display_formatting
-        PASS [   0.011s] ( 21/187) ephemeral-chat::cli_unit rapid_successive_commands
-        PASS [   0.010s] ( 22/187) ephemeral-chat::cli_unit room_handle_methods_without_tor
-        PASS [   0.009s] ( 23/187) ephemeral-chat::cli_unit room_handle_quit_idempotent
-        PASS [   0.009s] ( 24/187) ephemeral-chat::cli_unit scroll_bounds
-        PASS [   0.008s] ( 25/187) ephemeral-chat::cli_unit shutdown_state_locks_input
-        PASS [   0.009s] ( 26/187) ephemeral-chat::bin/chat tests::ctrl_c_sets_quit
-        PASS [   0.009s] ( 27/187) ephemeral-chat::bin/chat tests::typing_and_sending_does_not_quit
-        PASS [   0.009s] ( 28/187) ephemeral-chat::bin/chat tests::typing_individual_chars_does_not_quit
-        PASS [   0.008s] ( 29/187) ephemeral-chat-core hub::tests::broadcast_capacity_is_256
-        PASS [   0.009s] ( 30/187) ephemeral-chat-core hub::tests::deregister_peer_deregistering_unknown_is_noop
-        PASS [   0.008s] ( 31/187) ephemeral-chat-core hub::tests::deregister_peer_emits_peer_leave_event
-        PASS [   0.009s] ( 32/187) ephemeral-chat-core hub::tests::deregister_peer_removes_from_registry
-        PASS [   0.008s] ( 33/187) ephemeral-chat-core hub::tests::handshake_accepts_valid_nonce
-        PASS [   0.008s] ( 34/187) ephemeral-chat-core hub::tests::handshake_len_is_32_bytes
-        PASS [   0.008s] ( 35/187) ephemeral-chat-core hub::tests::handshake_nonce_is_consumed_on_success
-        PASS [   0.008s] ( 36/187) ephemeral-chat-core hub::tests::handshake_rejects_reused_nonce
-        PASS [   0.008s] ( 37/187) ephemeral-chat-core hub::tests::handshake_rejects_wrong_length
-        PASS [   0.008s] ( 38/187) ephemeral-chat-core hub::tests::handshake_writes_ack_on_success
-        PASS [   0.008s] ( 39/187) ephemeral-chat-core hub::tests::handshake_writes_nack_on_bad_length
-        PASS [   0.008s] ( 40/187) ephemeral-chat-core hub::tests::handshake_writes_nack_on_rejected_nonce
-        PASS [   0.008s] ( 41/187) ephemeral-chat-core hub::tests::nonce_set_rejects_duplicates
-        PASS [   0.008s] ( 42/187) ephemeral-chat-core hub::tests::peer_registry_broadcast_skips_deregistered_peers
-        PASS [   0.008s] ( 43/187) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_all_delivers_to_each_peer
-        PASS [   0.008s] ( 44/187) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_empty_registry_no_panic
-        PASS [   0.008s] ( 45/187) ephemeral-chat-core hub::tests::peer_registry_deregister_decrements_len
-        PASS [   0.008s] ( 46/187) ephemeral-chat-core hub::tests::peer_registry_deregister_empty_registry_no_panic
-        PASS [   0.008s] ( 47/187) ephemeral-chat-core hub::tests::peer_registry_deregister_unknown_is_noop
-        PASS [   0.008s] ( 48/187) ephemeral-chat-core hub::tests::peer_registry_len_starts_at_zero
-        PASS [   0.008s] ( 49/187) ephemeral-chat-core hub::tests::peer_registry_register_and_deregister_toggle
-        PASS [   0.008s] ( 50/187) ephemeral-chat-core hub::tests::peer_registry_register_increments_len
-        PASS [   0.008s] ( 51/187) ephemeral-chat-core hub::tests::peer_registry_register_multiple_peers
-        PASS [   0.008s] ( 52/187) ephemeral-chat-core hub::tests::peer_registry_register_same_id_twice_overwrites
-        PASS [   0.008s] ( 53/187) ephemeral-chat-core hub::tests::peer_registry_snapshot_empty_registry
-        PASS [   0.008s] ( 54/187) ephemeral-chat-core hub::tests::peer_registry_snapshot_includes_joined_at
-        PASS [   0.008s] ( 55/187) ephemeral-chat-core hub::tests::peer_registry_snapshot_returns_all_peers
-        PASS [   0.008s] ( 56/187) ephemeral-chat-core hub::tests::read_timeout_is_60_secs
-        PASS [   0.008s] ( 57/187) ephemeral-chat-core hub::tests::reader_task_forwards_chat_message
-        PASS [   0.511s] ( 58/187) ephemeral-chat::cli_e2e cli_two_process_chat
-        PASS [   0.009s] ( 59/187) ephemeral-chat-core hub::tests::reader_task_responds_to_ping_with_pong
-        PASS [   0.008s] ( 60/187) ephemeral-chat-core hub::tests::reader_task_stops_on_malformed_data
-        PASS [   0.009s] ( 61/187) ephemeral-chat-core hub::tests::register_peer_adds_to_registry
-        PASS [   0.009s] ( 62/187) ephemeral-chat-core hub::tests::register_peer_emits_peer_join_event
-        PASS [   0.009s] ( 63/187) ephemeral-chat-core hub::tests::register_peer_returns_tx_rx_pair
-        PASS [   0.009s] ( 64/187) ephemeral-chat-core hub::tests::write_timeout_is_30_secs
-        PASS [   0.009s] ( 65/187) ephemeral-chat-core hub::tests::writer_task_exits_when_all_channels_closed
-        PASS [   0.008s] ( 66/187) ephemeral-chat-core hub::tests::writer_task_writes_from_broadcast_channel
-        PASS [   0.008s] ( 67/187) ephemeral-chat-core hub::tests::writer_task_writes_from_direct_channel
-        PASS [   0.008s] ( 68/187) ephemeral-chat-core invite::tests::decode_empty_string
-        PASS [   0.008s] ( 69/187) ephemeral-chat-core invite::tests::decode_garbage_too_short
-        PASS [   0.008s] ( 70/187) ephemeral-chat-core invite::tests::decode_invalid_base58
-        PASS [   0.008s] ( 71/187) ephemeral-chat-core invite::tests::decode_non_onion_address
-        PASS [   0.008s] ( 72/187) ephemeral-chat-core invite::tests::decode_short_address
-        PASS [   0.008s] ( 73/187) ephemeral-chat-core invite::tests::different_nonce_different_token
-        PASS [   0.008s] ( 74/187) ephemeral-chat-core invite::tests::expired_invite
-        PASS [   0.008s] ( 75/187) ephemeral-chat-core invite::tests::fresh_invite_with_ttl
-        PASS [   0.008s] ( 76/187) ephemeral-chat-core invite::tests::future_beyond_skew_rejected
-        PASS [   0.008s] ( 77/187) ephemeral-chat-core invite::tests::future_within_skew_accepted
-        PASS [   0.008s] ( 78/187) ephemeral-chat-core invite::tests::no_ttl_skips_expiry
-        PASS [   0.008s] ( 79/187) ephemeral-chat-core invite::tests::roundtrip_basic
-        PASS [   0.008s] ( 80/187) ephemeral-chat-core invite::tests::roundtrip_ff_nonce
-        PASS [   0.007s] ( 81/187) ephemeral-chat-core invite::tests::roundtrip_past_timestamp
-        PASS [   0.008s] ( 82/187) ephemeral-chat-core invite::tests::roundtrip_zero_nonce
-        PASS [   0.008s] ( 83/187) ephemeral-chat-core invite::tests::token_is_contiguous_no_whitespace
-        PASS [   0.008s] ( 84/187) ephemeral-chat-core invite::tests::token_is_deterministic
-        PASS [   0.008s] ( 85/187) ephemeral-chat-core invite::tests::ttl_zero_skips_expiry
-        PASS [   0.008s] ( 86/187) ephemeral-chat-core joiner::tests::close_is_idempotent
-        PASS [   0.008s] ( 87/187) ephemeral-chat-core joiner::tests::connect_calls_tor_with_correct_target
-        PASS [   0.008s] ( 88/187) ephemeral-chat-core joiner::tests::connect_propagates_tor_error
-        PASS [   0.008s] ( 89/187) ephemeral-chat-core joiner::tests::connect_rejects_empty_invite
-        PASS [   0.008s] ( 90/187) ephemeral-chat-core joiner::tests::connect_rejects_expired_invite
-        PASS [   0.008s] ( 91/187) ephemeral-chat-core joiner::tests::connect_rejects_garbage_invite
-        PASS [   0.007s] ( 92/187) ephemeral-chat-core joiner::tests::connect_rejects_invite_with_bad_onion_address
-        PASS [   0.008s] ( 93/187) ephemeral-chat-core joiner::tests::connect_rejects_truncated_invite
-        PASS [   0.007s] ( 94/187) ephemeral-chat-core joiner::tests::drop_calls_close
-        PASS [   2.016s] ( 95/187) ephemeral-chat::cli_e2e cli_graceful_shutdown_on_kill
-        PASS [   0.009s] ( 96/187) ephemeral-chat-core joiner::tests::handshake_accept_returns_peer_id
-        PASS [   0.009s] ( 97/187) ephemeral-chat-core joiner::tests::handshake_reject_returns_error
-        PASS [   0.008s] ( 98/187) ephemeral-chat-core joiner::tests::run_exits_on_immediate_shutdown
-        PASS [   0.111s] ( 99/187) ephemeral-chat-core joiner::tests::run_emits_correct_peer_name
-        PASS [   0.009s] (100/187) ephemeral-chat-core joiner::tests::run_exits_when_event_receiver_dropped
-        PASS [   0.110s] (101/187) ephemeral-chat-core joiner::tests::run_exits_on_shutdown_after_delay
-        PASS [   0.008s] (102/187) ephemeral-chat-core joiner::tests::run_exits_when_message_channel_closes
-        PASS [   0.110s] (103/187) ephemeral-chat-core joiner::tests::run_forwards_messages_to_events
-        PASS [   0.211s] (104/187) ephemeral-chat-core joiner::tests::run_forwards_multiple_messages_in_order
-        PASS [   0.111s] (105/187) ephemeral-chat-core joiner::tests::run_handles_empty_message
-        PASS [   0.112s] (106/187) ephemeral-chat-core joiner::tests::run_handles_long_message
-        PASS [   0.111s] (107/187) ephemeral-chat-core joiner::tests::run_handles_unicode_message
-        PASS [   0.010s] (108/187) ephemeral-chat-core joiner::tests::run_rapid_message_then_shutdown
-        PASS [   0.008s] (109/187) ephemeral-chat-core joiner::tests::run_shutdown_while_message_in_flight
-        PASS [   0.008s] (110/187) ephemeral-chat-core room::tests::chat_event_variants_are_pub
-        PASS [   0.009s] (111/187) ephemeral-chat-core room::tests::event_stream_ends_on_sender_drop
-        PASS [   0.008s] (112/187) ephemeral-chat-core room::tests::event_stream_is_receiver
-        PASS [   0.008s] (113/187) ephemeral-chat-core room::tests::host_config_and_join_config_exist
-        PASS [   0.008s] (114/187) ephemeral-chat-core room::tests::invite_on_joiner_fails
-        PASS [   0.008s] (115/187) ephemeral-chat-core room::tests::quit_is_idempotent
-        PASS [   0.008s] (116/187) ephemeral-chat-core room::tests::room_handle_is_clone
-        PASS [   0.008s] (117/187) ephemeral-chat-core room::tests::room_handle_is_send_sync
-        PASS [   0.008s] (118/187) ephemeral-chat-core room::tests::send_after_quit_fails
-        PASS [   0.008s] (119/187) ephemeral-chat-core wire::tests::header_is_big_endian
-        PASS [   0.008s] (120/187) ephemeral-chat-core wire::tests::malformed_json_rejected
-        PASS [   0.008s] (121/187) ephemeral-chat-core wire::tests::oversized_decode_rejected
-        PASS [   0.008s] (122/187) ephemeral-chat-core wire::tests::oversized_encode_rejected
-        PASS [   0.008s] (123/187) ephemeral-chat-core wire::tests::read_frame_complete
-        PASS [   0.008s] (124/187) ephemeral-chat-core wire::tests::roundtrip_chat
-        PASS [   0.008s] (125/187) ephemeral-chat-core wire::tests::roundtrip_ping_pong
-        PASS [   0.008s] (126/187) ephemeral-chat-core wire::tests::roundtrip_system
-        PASS [   0.008s] (127/187) ephemeral-chat-core wire::tests::roundtrip_unicode
-        PASS [   0.008s] (128/187) ephemeral-chat-core wire::tests::short_data_rejected
-        PASS [   0.008s] (129/187) ephemeral-chat-core wire::tests::truncated_payload_rejected
-        PASS [   0.008s] (130/187) ephemeral-chat-core wire::tests::zero_length_rejected
-        PASS [   0.008s] (131/187) ephemeral-chat-core wire::tests::write_frame_roundtrip
-        PASS [   0.010s] (132/187) ephemeral-chat-core::e2e e2e_double_join_nonce_reuse_detectable
-        PASS [   0.010s] (133/187) ephemeral-chat-core::e2e e2e_expired_invite_rejected
-        PASS [   3.014s] (134/187) ephemeral-chat::cli_e2e cli_join_startup_no_panic
-        PASS [   3.016s] (135/187) ephemeral-chat::cli_e2e cli_host_startup_no_panic
-        PASS [   2.010s] (136/187) ephemeral-chat::cli_e2e cli_terminal_restoration_on_exit
-        PASS [   4.022s] (137/187) ephemeral-chat::cli_e2e cli_long_input_no_crash
-        PASS [   5.017s] (138/187) ephemeral-chat::cli_e2e cli_join_invalid_code_no_crash
-        PASS [  10.016s] (139/187) ephemeral-chat::cli_e2e cli_bootstrap_failure_handling
-        PASS [  17.322s] (140/187) ephemeral-chat-core::e2e e2e_invalid_invite_code_rejected
-        PASS [  21.093s] (141/187) ephemeral-chat::bin/chat tests::second_send_with_no_peers_works
-        PASS [  23.026s] (142/187) ephemeral-chat::cli_e2e cli_host_send_message_no_peers_stays_alive
-        PASS [  22.130s] (143/187) ephemeral-chat-core::e2e e2e_host_starts_room_and_emits_room_ready
-        PASS [  24.075s] (144/187) ephemeral-chat-core::e2e e2e_host_generates_valid_invite_code
-        PASS [  24.511s] (145/187) ephemeral-chat-core::e2e e2e_cli_commands_work_in_async_context
-        PASS [  30.362s] (146/187) ephemeral-chat-core::e2e e2e_host_send_message_no_peers_room_stays_open
-        PASS [  38.034s] (147/187) ephemeral-chat::cli_e2e cli_joiner_can_send_messages_headless
-        PASS [  19.226s] (148/187) ephemeral-chat-core::integration e2e_drop_triggers_cleanup
-        PASS [   0.051s] (149/187) ephemeral-chat-core::integration offline_bootstrap_rejected_after_first
-        PASS [   0.025s] (150/187) ephemeral-chat-core::integration offline_invite_roundtrip_with_port
-        PASS [   0.024s] (151/187) ephemeral-chat-core::integration offline_joiner_rejected_without_connect
-        PASS [  22.077s] (152/187) ephemeral-chat-core::integration e2e_bootstrap_emits_progress_0_to_100
-        PASS [  18.570s] (153/187) ephemeral-chat-core::integration e2e_host_onion_service_and_get_address
-        PASS [  43.369s] (154/187) ephemeral-chat-core::e2e e2e_independent_bootstrap_joiner_sends_message
-        PASS [  16.825s] (155/187) ephemeral-chat-core::integration e2e_joiner_timeout_on_bad_address
-        PASS [   0.010s] (156/187) ephemeral-chat-core::joiner_integration close_is_idempotent
-        PASS [   0.009s] (157/187) ephemeral-chat-core::joiner_integration connect_calls_tor_with_correct_target
-        PASS [   0.016s] (158/187) ephemeral-chat-core::joiner_integration connect_propagates_tor_error
-        PASS [   0.010s] (159/187) ephemeral-chat-core::joiner_integration connect_rejects_empty_invite
-        PASS [   0.009s] (160/187) ephemeral-chat-core::joiner_integration connect_rejects_expired_invite
-        PASS [   0.010s] (161/187) ephemeral-chat-core::joiner_integration connect_rejects_garbage_invite
-        PASS [   0.008s] (162/187) ephemeral-chat-core::joiner_integration connect_rejects_invite_with_bad_onion_address
-        PASS [   0.008s] (163/187) ephemeral-chat-core::joiner_integration connect_rejects_truncated_invite
-        PASS [   0.008s] (164/187) ephemeral-chat-core::joiner_integration drop_calls_close
-        PASS [   0.114s] (165/187) ephemeral-chat-core::joiner_integration run_emits_peer_name_in_events
-        PASS [   0.018s] (166/187) ephemeral-chat-core::joiner_integration run_exits_on_immediate_shutdown
-        PASS [   0.122s] (167/187) ephemeral-chat-core::joiner_integration run_exits_on_shutdown_after_delay
-        PASS [   0.020s] (168/187) ephemeral-chat-core::joiner_integration run_exits_when_event_receiver_dropped
-        PASS [   0.036s] (169/187) ephemeral-chat-core::joiner_integration run_exits_when_message_channel_closes
-        PASS [   0.219s] (170/187) ephemeral-chat-core::joiner_integration run_forwards_messages_in_order
-        PASS [   0.128s] (171/187) ephemeral-chat-core::joiner_integration run_forwards_single_message_to_events
-        PASS [   0.124s] (172/187) ephemeral-chat-core::joiner_integration run_handles_empty_message
-        PASS [   0.124s] (173/187) ephemeral-chat-core::joiner_integration run_handles_long_message
-        PASS [   0.123s] (174/187) ephemeral-chat-core::joiner_integration run_handles_unicode_message
-        PASS [   0.016s] (175/187) ephemeral-chat-core::joiner_integration run_rapid_messages_then_shutdown
-        PASS [   0.021s] (176/187) ephemeral-chat-core::joiner_integration run_shutdown_while_message_in_flight
-        PASS [  18.656s] (177/187) ephemeral-chat-core::integration e2e_shutdown_idempotent
-        SLOW [> 60.000s] (───────) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
-        PASS [  60.016s] (178/187) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
-        PASS [  16.415s] (179/187) ephemeral-chat-core::joiner_e2e e2e_joiner_rejects_expired_invite
-        SLOW [> 60.000s] (───────) ephemeral-chat-core::e2e e2e_joiner_connects_and_peer_join_fires
-        SLOW [> 60.000s] (───────) ephemeral-chat-core::e2e e2e_messages_flow_bidirectional
-        PASS [  45.321s] (180/187) ephemeral-chat-core::integration e2e_joiner_connects_to_host_and_transfers_data
-        PASS [  65.229s] (181/187) ephemeral-chat-core::e2e e2e_messages_flow_bidirectional
-        SLOW [> 60.000s] (───────) ephemeral-chat-core::e2e e2e_peer_leave_on_joiner_quit
-        SLOW [> 60.000s] (───────) ephemeral-chat-core::e2e e2e_room_close_notifies_joiner
-        PASS [  65.339s] (182/187) ephemeral-chat-core::e2e e2e_peer_leave_on_joiner_quit
-        FAIL [  85.488s] (183/187) ephemeral-chat-core::e2e e2e_joiner_connects_and_peer_join_fires
-  stdout ───
-
-    running 1 test
-    test e2e_joiner_connects_and_peer_join_fires has been running for over 60 seconds
-    test e2e_joiner_connects_and_peer_join_fires ... FAILED
-
-    failures:
-
-    failures:
-        e2e_joiner_connects_and_peer_join_fires
-
-    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 85.47s
-
-  stderr ───
-
-    thread 'e2e_joiner_connects_and_peer_join_fires' (11069499) panicked at crates/core/tests/e2e.rs:189:10:
-    host PeerJoin
-    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-  Cancelling due to test failure: 4 tests still running
-        PASS [  75.742s] (184/187) ephemeral-chat-core::e2e e2e_room_close_notifies_joiner
-        PASS [  57.313s] (185/187) ephemeral-chat-core::joiner_e2e e2e_joiner_connects_receives_messages
-        PASS [  57.841s] (186/187) ephemeral-chat-core::joiner_e2e e2e_joiner_quit_cleans_up
-        SLOW [> 60.000s] (───────) ephemeral-chat-core::joiner_e2e e2e_joiner_handshake_accepted
-        PASS [  60.075s] (187/187) ephemeral-chat-core::joiner_e2e e2e_joiner_handshake_accepted
+ Nextest run ID 90deb280-08fc-4a81-ab5d-21a8c96bb31e with nextest profile: default
+    Starting 158 tests across 5 binaries (3 binaries skipped)
+        PASS [   0.018s] (  1/158) ephemeral-chat::cli_unit bootstrap_to_running_transition
+        PASS [   0.018s] (  2/158) ephemeral-chat::cli_unit input_cursor_bounds
+        PASS [   0.018s] (  3/158) ephemeral-chat::cli_unit ctrl_c_detection
+        PASS [   0.019s] (  4/158) ephemeral-chat::cli_unit empty_input_no_dispatch
+        PASS [   0.022s] (  5/158) ephemeral-chat::cli_unit command_channel_not_ready
+        PASS [   0.023s] (  6/158) ephemeral-chat::cli_unit command_prefix_stripping
+        PASS [   0.023s] (  7/158) ephemeral-chat::cli_unit display_message_timestamp_handling
+        PASS [   0.023s] (  8/158) ephemeral-chat::cli_unit cli_args_host_command
+        PASS [   0.023s] (  9/158) ephemeral-chat::cli_unit cmd_result_handling
+        PASS [   0.024s] ( 10/158) ephemeral-chat::cli_unit command_parsing_routes_correctly
+        PASS [   0.024s] ( 11/158) ephemeral-chat::cli_unit dispatch_command_uses_spawn_not_block_on
+        PASS [   0.017s] ( 12/158) ephemeral-chat::cli_unit non_slash_input_not_command
+        PASS [   0.018s] ( 13/158) ephemeral-chat::cli_unit invite_before_room_ready
+        PASS [   0.036s] ( 14/158) ephemeral-chat::cli_unit dispatch_command_no_panic_in_runtime
+        PASS [   0.018s] ( 15/158) ephemeral-chat::cli_unit peer_info_display_formatting
+        PASS [   0.015s] ( 16/158) ephemeral-chat::cli_unit room_handle_methods_without_tor
+        PASS [   0.014s] ( 17/158) ephemeral-chat::bin/chat tests::typing_and_sending_does_not_quit
+        PASS [   0.015s] ( 18/158) ephemeral-chat::cli_unit room_handle_quit_idempotent
+        PASS [   0.015s] ( 19/158) ephemeral-chat::cli_unit scroll_bounds
+        PASS [   0.016s] ( 20/158) ephemeral-chat::bin/chat tests::ctrl_c_sets_quit
+        PASS [   0.016s] ( 21/158) ephemeral-chat::cli_unit shutdown_state_locks_input
+        PASS [   0.025s] ( 22/158) ephemeral-chat::cli_unit rapid_successive_commands
+        PASS [   0.015s] ( 23/158) ephemeral-chat-core factory::tests::factory_is_default
+        PASS [   0.016s] ( 24/158) ephemeral-chat-core hub::tests::broadcast_capacity_is_256
+        PASS [   0.018s] ( 25/158) ephemeral-chat-core factory::tests::create_with_join_config_returns_handle_and_stream
+        PASS [   0.015s] ( 26/158) ephemeral-chat-core hub::tests::deregister_peer_removes_from_registry
+        PASS [   0.016s] ( 27/158) ephemeral-chat-core hub::tests::deregister_peer_emits_peer_leave_event
+        PASS [   0.017s] ( 28/158) ephemeral-chat-core hub::tests::deregister_peer_deregistering_unknown_is_noop
+        PASS [   0.020s] ( 29/158) ephemeral-chat::bin/chat tests::typing_individual_chars_does_not_quit
+        PASS [   0.018s] ( 30/158) ephemeral-chat-core factory::tests::room_config_is_clone_debug
+        PASS [   0.021s] ( 31/158) ephemeral-chat-core factory::tests::create_with_host_config_returns_handle_and_stream
+        PASS [   0.018s] ( 32/158) ephemeral-chat-core hub::tests::handshake_accepts_valid_nonce
+        PASS [   0.013s] ( 33/158) ephemeral-chat-core hub::tests::handshake_len_is_32_bytes
+        PASS [   0.013s] ( 34/158) ephemeral-chat-core hub::tests::handshake_nonce_is_consumed_on_success
+        PASS [   0.013s] ( 35/158) ephemeral-chat-core hub::tests::handshake_rejects_reused_nonce
+        PASS [   0.012s] ( 36/158) ephemeral-chat-core hub::tests::handshake_writes_nack_on_bad_length
+        PASS [   0.012s] ( 37/158) ephemeral-chat-core hub::tests::handshake_writes_ack_on_success
+        PASS [   0.011s] ( 38/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_all_delivers_to_each_peer
+        PASS [   0.010s] ( 39/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_empty_registry_no_panic
+        PASS [   0.013s] ( 40/158) ephemeral-chat-core hub::tests::peer_registry_broadcast_skips_deregistered_peers
+        PASS [   0.014s] ( 41/158) ephemeral-chat-core hub::tests::handshake_writes_nack_on_rejected_nonce
+        PASS [   0.012s] ( 42/158) ephemeral-chat-core hub::tests::peer_registry_deregister_decrements_len
+        PASS [   0.017s] ( 43/158) ephemeral-chat-core hub::tests::handshake_rejects_wrong_length
+        PASS [   0.016s] ( 44/158) ephemeral-chat-core hub::tests::nonce_set_rejects_duplicates
+        PASS [   0.012s] ( 45/158) ephemeral-chat-core hub::tests::peer_registry_deregister_unknown_is_noop
+        PASS [   0.012s] ( 46/158) ephemeral-chat-core hub::tests::peer_registry_register_increments_len
+        PASS [   0.013s] ( 47/158) ephemeral-chat-core hub::tests::peer_registry_len_starts_at_zero
+        PASS [   0.013s] ( 48/158) ephemeral-chat-core hub::tests::peer_registry_register_and_deregister_toggle
+        PASS [   0.014s] ( 49/158) ephemeral-chat-core hub::tests::peer_registry_deregister_empty_registry_no_panic
+        PASS [   0.012s] ( 50/158) ephemeral-chat-core hub::tests::peer_registry_register_multiple_peers
+        PASS [   0.012s] ( 51/158) ephemeral-chat-core hub::tests::peer_registry_register_same_id_twice_overwrites
+        PASS [   0.011s] ( 52/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_includes_joined_at
+        PASS [   0.013s] ( 53/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_empty_registry
+        PASS [   0.011s] ( 54/158) ephemeral-chat-core hub::tests::read_timeout_is_60_secs
+        PASS [   0.016s] ( 55/158) ephemeral-chat-core hub::tests::peer_registry_snapshot_returns_all_peers
+        PASS [   0.011s] ( 56/158) ephemeral-chat-core hub::tests::register_peer_adds_to_registry
+        PASS [   0.012s] ( 57/158) ephemeral-chat-core hub::tests::reader_task_responds_to_ping_with_pong
+        PASS [   0.012s] ( 58/158) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
+        PASS [   0.013s] ( 59/158) ephemeral-chat-core hub::tests::reader_task_forwards_chat_message
+        PASS [   0.011s] ( 60/158) ephemeral-chat-core hub::tests::write_timeout_is_30_secs
+        PASS [   0.012s] ( 61/158) ephemeral-chat-core hub::tests::register_peer_emits_peer_join_event
+        PASS [   0.013s] ( 62/158) ephemeral-chat-core hub::tests::reader_task_stops_on_malformed_data
+        PASS [   0.013s] ( 63/158) ephemeral-chat-core hub::tests::register_peer_returns_tx_rx_pair
+        PASS [   0.011s] ( 64/158) ephemeral-chat-core hub::tests::writer_task_writes_from_broadcast_channel
+        PASS [   0.014s] ( 65/158) ephemeral-chat-core hub::tests::writer_task_exits_when_all_channels_closed
+        PASS [   0.012s] ( 66/158) ephemeral-chat-core hub::tests::writer_task_writes_from_direct_channel
+        PASS [   0.012s] ( 67/158) ephemeral-chat-core invite::tests::decode_invalid_base58
+        PASS [   0.013s] ( 68/158) ephemeral-chat-core invite::tests::decode_empty_string
+        PASS [   0.012s] ( 69/158) ephemeral-chat-core invite::tests::decode_non_onion_address
+        PASS [   0.012s] ( 70/158) ephemeral-chat-core invite::tests::different_nonce_different_token
+        PASS [   0.012s] ( 71/158) ephemeral-chat-core invite::tests::expired_invite
+        PASS [   0.014s] ( 72/158) ephemeral-chat-core invite::tests::decode_garbage_too_short
+        PASS [   0.012s] ( 73/158) ephemeral-chat-core invite::tests::fresh_invite_with_ttl
+        PASS [   0.014s] ( 74/158) ephemeral-chat-core invite::tests::decode_short_address
+        PASS [   0.011s] ( 75/158) ephemeral-chat-core invite::tests::future_within_skew_accepted
+        PASS [   0.016s] ( 76/158) ephemeral-chat-core invite::tests::future_beyond_skew_rejected
+        PASS [   0.016s] ( 77/158) ephemeral-chat-core invite::tests::no_ttl_skips_expiry
+        PASS [   0.012s] ( 78/158) ephemeral-chat-core invite::tests::roundtrip_past_timestamp
+        PASS [   0.013s] ( 79/158) ephemeral-chat-core invite::tests::roundtrip_zero_nonce
+        PASS [   0.015s] ( 80/158) ephemeral-chat-core invite::tests::roundtrip_basic
+        PASS [   0.015s] ( 81/158) ephemeral-chat-core invite::tests::roundtrip_ff_nonce
+        PASS [   0.013s] ( 82/158) ephemeral-chat-core invite::tests::ttl_zero_skips_expiry
+        PASS [   0.015s] ( 83/158) ephemeral-chat-core invite::tests::token_is_contiguous_no_whitespace
+        PASS [   0.014s] ( 84/158) ephemeral-chat-core invite::tests::token_is_deterministic
+        PASS [   0.013s] ( 85/158) ephemeral-chat-core joiner::tests::close_is_idempotent
+        PASS [   0.013s] ( 86/158) ephemeral-chat-core joiner::tests::connect_calls_tor_with_correct_target
+        PASS [   0.016s] ( 87/158) ephemeral-chat-core joiner::tests::connect_propagates_tor_error
+        PASS [   0.012s] ( 88/158) ephemeral-chat-core joiner::tests::connect_rejects_expired_invite
+        PASS [   0.012s] ( 89/158) ephemeral-chat-core joiner::tests::connect_rejects_garbage_invite
+        PASS [   0.014s] ( 90/158) ephemeral-chat-core joiner::tests::connect_rejects_empty_invite
+        PASS [   0.013s] ( 91/158) ephemeral-chat-core joiner::tests::connect_rejects_truncated_invite
+        PASS [   0.012s] ( 92/158) ephemeral-chat-core joiner::tests::handshake_reject_returns_error
+        PASS [   0.013s] ( 93/158) ephemeral-chat-core joiner::tests::handshake_accept_returns_peer_id
+        PASS [   0.013s] ( 94/158) ephemeral-chat-core joiner::tests::drop_calls_close
+        PASS [   0.016s] ( 95/158) ephemeral-chat-core joiner::tests::handshake_invite_nonce_enables_duplicate_detection
+        PASS [   0.017s] ( 96/158) ephemeral-chat-core joiner::tests::connect_rejects_invite_with_bad_onion_address
+        PASS [   0.015s] ( 97/158) ephemeral-chat-core joiner::tests::handshake_sends_provided_nonce_on_wire
+        PASS [   0.011s] ( 98/158) ephemeral-chat-core joiner::tests::run_exits_on_immediate_shutdown
+        PASS [   0.012s] ( 99/158) ephemeral-chat-core joiner::tests::run_exits_when_event_receiver_dropped
+        PASS [   0.013s] (100/158) ephemeral-chat-core joiner::tests::run_exits_when_message_channel_closes
+        PASS [   0.011s] (101/158) ephemeral-chat-core joiner::tests::run_rapid_message_then_shutdown
+        PASS [   0.010s] (102/158) ephemeral-chat-core joiner::tests::run_shutdown_while_message_in_flight
+        PASS [   0.010s] (103/158) ephemeral-chat-core room::tests::chat_event_variants_are_pub
+        PASS [   0.010s] (104/158) ephemeral-chat-core room::tests::event_stream_ends_on_sender_drop
+        PASS [   0.009s] (105/158) ephemeral-chat-core room::tests::event_stream_is_receiver
+        PASS [   0.009s] (106/158) ephemeral-chat-core room::tests::host_config_and_join_config_exist
+        PASS [   0.009s] (107/158) ephemeral-chat-core room::tests::invite_on_joiner_fails
+        PASS [   0.011s] (108/158) ephemeral-chat-core room::tests::quit_is_idempotent
+        PASS [   0.011s] (109/158) ephemeral-chat-core room::tests::room_handle_is_clone
+        PASS [   0.010s] (110/158) ephemeral-chat-core room::tests::room_handle_is_send_sync
+        PASS [   0.010s] (111/158) ephemeral-chat-core room::tests::send_after_quit_fails
+        PASS [   0.010s] (112/158) ephemeral-chat-core wire::tests::header_is_big_endian
+        PASS [   0.009s] (113/158) ephemeral-chat-core wire::tests::malformed_json_rejected
+        PASS [   0.009s] (114/158) ephemeral-chat-core wire::tests::oversized_decode_rejected
+        PASS [   0.010s] (115/158) ephemeral-chat-core wire::tests::oversized_encode_rejected
+        PASS [   0.009s] (116/158) ephemeral-chat-core wire::tests::read_frame_complete
+        PASS [   0.009s] (117/158) ephemeral-chat-core wire::tests::roundtrip_chat
+        PASS [   0.009s] (118/158) ephemeral-chat-core wire::tests::roundtrip_ping_pong
+        PASS [   0.009s] (119/158) ephemeral-chat-core wire::tests::roundtrip_system
+        PASS [   0.009s] (120/158) ephemeral-chat-core wire::tests::roundtrip_unicode
+        PASS [   0.009s] (121/158) ephemeral-chat-core wire::tests::short_data_rejected
+        PASS [   0.009s] (122/158) ephemeral-chat-core wire::tests::truncated_payload_rejected
+        PASS [   0.010s] (123/158) ephemeral-chat-core wire::tests::write_frame_roundtrip
+        PASS [   0.009s] (124/158) ephemeral-chat-core wire::tests::zero_length_rejected
+        PASS [   0.116s] (125/158) ephemeral-chat-core joiner::tests::run_emits_correct_peer_name
+        PASS [   0.113s] (126/158) ephemeral-chat-core joiner::tests::run_exits_on_shutdown_after_delay
+        PASS [   0.114s] (127/158) ephemeral-chat-core joiner::tests::run_handles_empty_message
+        PASS [   0.116s] (128/158) ephemeral-chat-core joiner::tests::run_forwards_messages_to_events
+        PASS [   0.114s] (129/158) ephemeral-chat-core joiner::tests::run_handles_long_message
+        PASS [   0.115s] (130/158) ephemeral-chat-core joiner::tests::run_handles_unicode_message
+        PASS [   0.009s] (131/158) ephemeral-chat-core::joiner_integration close_is_idempotent
+        PASS [   0.009s] (132/158) ephemeral-chat-core::joiner_integration connect_calls_tor_with_correct_target
+        PASS [   0.009s] (133/158) ephemeral-chat-core::joiner_integration connect_propagates_tor_error
+        PASS [   0.009s] (134/158) ephemeral-chat-core::joiner_integration connect_rejects_empty_invite
+        PASS [   0.009s] (135/158) ephemeral-chat-core::joiner_integration connect_rejects_expired_invite
+        PASS [   0.008s] (136/158) ephemeral-chat-core::joiner_integration connect_rejects_garbage_invite
+        PASS [   0.008s] (137/158) ephemeral-chat-core::joiner_integration connect_rejects_invite_with_bad_onion_address
+        PASS [   0.009s] (138/158) ephemeral-chat-core::joiner_integration connect_rejects_truncated_invite
+        PASS [   0.008s] (139/158) ephemeral-chat-core::joiner_integration drop_calls_close
+        PASS [   0.008s] (140/158) ephemeral-chat-core::joiner_integration run_exits_on_immediate_shutdown
+        PASS [   0.008s] (141/158) ephemeral-chat-core::joiner_integration run_exits_when_event_receiver_dropped
+        PASS [   0.008s] (142/158) ephemeral-chat-core::joiner_integration run_exits_when_message_channel_closes
+        PASS [   0.215s] (143/158) ephemeral-chat-core joiner::tests::run_forwards_multiple_messages_in_order
+        PASS [   0.111s] (144/158) ephemeral-chat-core::joiner_integration run_emits_peer_name_in_events
+        PASS [   0.111s] (145/158) ephemeral-chat-core::joiner_integration run_exits_on_shutdown_after_delay
+        PASS [   0.110s] (146/158) ephemeral-chat-core::joiner_integration run_forwards_single_message_to_events
+        PASS [   0.009s] (147/158) ephemeral-chat-core::joiner_integration run_rapid_messages_then_shutdown
+        PASS [   0.110s] (148/158) ephemeral-chat-core::joiner_integration run_handles_empty_message
+        PASS [   0.009s] (149/158) ephemeral-chat-core::joiner_integration run_shutdown_while_message_in_flight
+        PASS [   0.113s] (150/158) ephemeral-chat-core::joiner_integration run_handles_long_message
+        PASS [   0.211s] (151/158) ephemeral-chat-core::joiner_integration run_forwards_messages_in_order
+        PASS [   0.112s] (152/158) ephemeral-chat-core::joiner_integration run_handles_unicode_message
+        PASS [   0.512s] (153/158) ephemeral-chat-core::integration integration_room_close_notifies_joiner
+        PASS [   1.014s] (154/158) ephemeral-chat-core::integration integration_host_send_message_no_peers
+        PASS [   1.013s] (155/158) ephemeral-chat-core::integration integration_peer_join_fires
+        PASS [   1.012s] (156/158) ephemeral-chat-core::integration integration_peer_leave_on_joiner_quit
+        PASS [   1.515s] (157/158) ephemeral-chat-core::integration integration_messages_flow_bidirectional
+        PASS [  16.493s] (158/158) ephemeral-chat::bin/chat tests::second_send_with_no_peers_works
 ────────────
-     Summary [ 105.179s] 187 tests run: 186 passed (5 slow), 1 failed, 0 skipped
-        FAIL [  85.488s] (183/187) ephemeral-chat-core::e2e e2e_joiner_connects_and_peer_join_fires
-error: test run failed
-=== END Tue Jun  2 22:33:17 EDT 2026 ===
+     Summary [  16.517s] 158 tests run: 158 passed, 0 skipped
+[Finished running. Exit status: 0]
+[Running 'cargo nextest run  -E 'not binary(~e2e)'']
+   Compiling ephemeral-chat v0.1.0 (/Users/mikhail/Workspace/nullpipe/crates/cli)
+warning: unused import: `BufRead`
+   --> crates/cli/tests/cli_e2e.rs:353:26
+    |
+353 |     use std::io::{Write, BufRead, BufReader};
+    |                          ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `host_reader`
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_host_reader`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `invite_code`
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_invite_code`
+
+warning: `ephemeral-chat` (test "cli_e2e") generated 5 warnings (run `cargo fix --test "cli_e2e" -p ephemeral-chat` to apply 5 suggestions)
+error: expected item after attributes
+   --> crates/cli/src/main.rs:929:5
+    |
+928 |     #[tokio::test]
+    |     -------------- other attributes here
+929 |     #[ignore = "requires real Tor bootstrap (~16s); move to cli_e2e suite if needed"],
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: could not compile `ephemeral-chat` (bin "chat") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ephemeral-chat` (bin "chat" test) due to 1 previous error
+error: command `/Users/mikhail/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --no-run --message-format json-render-diagnostics` exited with code 101
+[Finished running. Exit status: 101]
+[Running 'cargo nextest run  -E 'not binary(~e2e)'']
+   Compiling ephemeral-chat v0.1.0 (/Users/mikhail/Workspace/nullpipe/crates/cli)
+warning: unused import: `BufRead`
+   --> crates/cli/tests/cli_e2e.rs:353:26
+    |
+353 |     use std::io::{Write, BufRead, BufReader};
+    |                          ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `host_reader`
+   --> crates/cli/tests/cli_e2e.rs:377:9
+    |
+377 |     let mut host_reader = BufReader::new(host_stdout);
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_host_reader`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `invite_code`
+   --> crates/cli/tests/cli_e2e.rs:378:9
+    |
+378 |     let mut invite_code = String::new();
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_invite_code`
+
+warning: `ephemeral-chat` (test "cli_e2e") generated 5 warnings (run `cargo fix --test "cli_e2e" -p ephemeral-chat` to apply 5 suggestions)
+warning: unused variable: `cmd`
+   --> crates/cli/src/main.rs:248:21
+    |
+248 |         if let Some(cmd) = text.strip_prefix('/') {
+    |                     ^^^ help: if this is intentional, prefix it with an underscore: `_cmd`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ephemeral-chat` (bin "chat" test) generated 1 warning (run `cargo fix --bin "chat" -p ephemeral-chat --tests` to apply 1 suggestion)
+warning: `ephemeral-chat` (bin "chat") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s
+────────────
+ Nextest run ID f5a73076-3a23-4475-ab39-7c7163fbd7a8 with nextest profile: default
+    Starting 157 tests across 5 binaries (1 test and 3 binaries skipped)
+        PASS [   0.016s] (  1/157) ephemeral-chat::cli_unit input_cursor_bounds
+        PASS [   0.017s] (  2/157) ephemeral-chat::cli_unit bootstrap_to_running_transition
+        PASS [   0.018s] (  3/157) ephemeral-chat::cli_unit display_message_timestamp_handling
+        PASS [   0.019s] (  4/157) ephemeral-chat::cli_unit ctrl_c_detection
+        PASS [   0.021s] (  5/157) ephemeral-chat::cli_unit command_parsing_routes_correctly
+        PASS [   0.022s] (  6/157) ephemeral-chat::cli_unit empty_input_no_dispatch
+        PASS [   0.021s] (  7/157) ephemeral-chat::cli_unit command_channel_not_ready
+        PASS [   0.021s] (  8/157) ephemeral-chat::cli_unit cli_args_host_command
+        PASS [   0.023s] (  9/157) ephemeral-chat::cli_unit cmd_result_handling
+        PASS [   0.023s] ( 10/157) ephemeral-chat::cli_unit command_prefix_stripping
+        PASS [   0.027s] ( 11/157) ephemeral-chat::cli_unit dispatch_command_uses_spawn_not_block_on
+        PASS [   0.030s] ( 12/157) ephemeral-chat::cli_unit dispatch_command_no_panic_in_runtime
+        PASS [   0.017s] ( 13/157) ephemeral-chat::cli_unit non_slash_input_not_command
+        PASS [   0.018s] ( 14/157) ephemeral-chat::cli_unit invite_before_room_ready
+        PASS [   0.014s] ( 15/157) ephemeral-chat::cli_unit scroll_bounds
+        PASS [   0.019s] ( 16/157) ephemeral-chat::cli_unit peer_info_display_formatting
+        PASS [   0.015s] ( 17/157) ephemeral-chat::bin/chat tests::ctrl_c_sets_quit
+        PASS [   0.016s] ( 18/157) ephemeral-chat::cli_unit room_handle_quit_idempotent
+        PASS [   0.016s] ( 19/157) ephemeral-chat::cli_unit room_handle_methods_without_tor
+        PASS [   0.015s] ( 20/157) ephemeral-chat::bin/chat tests::typing_and_sending_does_not_quit
+        PASS [   0.017s] ( 21/157) ephemeral-chat::cli_unit shutdown_state_locks_input
+        PASS [   0.023s] ( 22/157) ephemeral-chat::cli_unit rapid_successive_commands
+        PASS [   0.015s] ( 23/157) ephemeral-chat::bin/chat tests::typing_individual_chars_does_not_quit
+        PASS [   0.012s] ( 24/157) ephemeral-chat-core factory::tests::room_config_is_clone_debug
+        PASS [   0.018s] ( 25/157) ephemeral-chat-core factory::tests::create_with_host_config_returns_handle_and_stream
+        PASS [   0.014s] ( 26/157) ephemeral-chat-core factory::tests::factory_is_default
+        PASS [   0.014s] ( 27/157) ephemeral-chat-core factory::tests::create_with_join_config_returns_handle_and_stream
+        PASS [   0.013s] ( 28/157) ephemeral-chat-core hub::tests::deregister_peer_emits_peer_leave_event
+        PASS [   0.013s] ( 29/157) ephemeral-chat-core hub::tests::deregister_peer_deregistering_unknown_is_noop
+        PASS [   0.013s] ( 30/157) ephemeral-chat-core hub::tests::handshake_len_is_32_bytes
+        PASS [   0.015s] ( 31/157) ephemeral-chat-core hub::tests::broadcast_capacity_is_256
+        PASS [   0.014s] ( 32/157) ephemeral-chat-core hub::tests::deregister_peer_removes_from_registry
+        PASS [   0.017s] ( 33/157) ephemeral-chat-core hub::tests::handshake_accepts_valid_nonce
+        PASS [   0.016s] ( 34/157) ephemeral-chat-core hub::tests::handshake_nonce_is_consumed_on_success
+        PASS [   0.016s] ( 35/157) ephemeral-chat-core hub::tests::handshake_rejects_reused_nonce
+        PASS [   0.012s] ( 36/157) ephemeral-chat-core hub::tests::handshake_writes_ack_on_success
+        PASS [   0.012s] ( 37/157) ephemeral-chat-core hub::tests::handshake_writes_nack_on_bad_length
+        PASS [   0.012s] ( 38/157) ephemeral-chat-core hub::tests::handshake_rejects_wrong_length
+        PASS [   0.012s] ( 39/157) ephemeral-chat-core hub::tests::handshake_writes_nack_on_rejected_nonce
+        PASS [   0.012s] ( 40/157) ephemeral-chat-core hub::tests::peer_registry_broadcast_skips_deregistered_peers
+        PASS [   0.011s] ( 41/157) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_empty_registry_no_panic
+        PASS [   0.013s] ( 42/157) ephemeral-chat-core hub::tests::nonce_set_rejects_duplicates
+        PASS [   0.012s] ( 43/157) ephemeral-chat-core hub::tests::peer_registry_broadcast_to_all_delivers_to_each_peer
+        PASS [   0.014s] ( 44/157) ephemeral-chat-core hub::tests::peer_registry_deregister_decrements_len
+        PASS [   0.017s] ( 45/157) ephemeral-chat-core hub::tests::peer_registry_deregister_empty_registry_no_panic
+        PASS [   0.013s] ( 46/157) ephemeral-chat-core hub::tests::peer_registry_register_and_deregister_toggle
+        PASS [   0.015s] ( 47/157) ephemeral-chat-core hub::tests::peer_registry_deregister_unknown_is_noop
+        PASS [   0.013s] ( 48/157) ephemeral-chat-core hub::tests::peer_registry_register_multiple_peers
+        PASS [   0.012s] ( 49/157) ephemeral-chat-core hub::tests::peer_registry_snapshot_empty_registry
+        PASS [   0.016s] ( 50/157) ephemeral-chat-core hub::tests::peer_registry_len_starts_at_zero
+        PASS [   0.014s] ( 51/157) ephemeral-chat-core hub::tests::peer_registry_register_increments_len
+        PASS [   0.013s] ( 52/157) ephemeral-chat-core hub::tests::peer_registry_snapshot_includes_joined_at
+        PASS [   0.014s] ( 53/157) ephemeral-chat-core hub::tests::read_timeout_is_60_secs
+        PASS [   0.017s] ( 54/157) ephemeral-chat-core hub::tests::peer_registry_register_same_id_twice_overwrites
+        PASS [   0.015s] ( 55/157) ephemeral-chat-core hub::tests::peer_registry_snapshot_returns_all_peers
+        PASS [   0.014s] ( 56/157) ephemeral-chat-core hub::tests::reader_task_forwards_chat_message
+        PASS [   0.012s] ( 57/157) ephemeral-chat-core hub::tests::reader_task_handles_eof_gracefully
+        PASS [   0.011s] ( 58/157) ephemeral-chat-core hub::tests::write_timeout_is_30_secs
+        PASS [   0.013s] ( 59/157) ephemeral-chat-core hub::tests::register_peer_adds_to_registry
+        PASS [   0.013s] ( 60/157) ephemeral-chat-core hub::tests::reader_task_responds_to_ping_with_pong
+        PASS [   0.014s] ( 61/157) ephemeral-chat-core hub::tests::reader_task_stops_on_malformed_data
+        PASS [   0.013s] ( 62/157) ephemeral-chat-core hub::tests::register_peer_returns_tx_rx_pair
+        PASS [   0.014s] ( 63/157) ephemeral-chat-core hub::tests::register_peer_emits_peer_join_event
+        PASS [   0.013s] ( 64/157) ephemeral-chat-core hub::tests::writer_task_exits_when_all_channels_closed
+        PASS [   0.014s] ( 65/157) ephemeral-chat-core hub::tests::writer_task_writes_from_broadcast_channel
+        PASS [   0.012s] ( 66/157) ephemeral-chat-core invite::tests::decode_garbage_too_short
+        PASS [   0.014s] ( 67/157) ephemeral-chat-core invite::tests::decode_empty_string
+        PASS [   0.016s] ( 68/157) ephemeral-chat-core hub::tests::writer_task_writes_from_direct_channel
+        PASS [   0.011s] ( 69/157) ephemeral-chat-core invite::tests::decode_invalid_base58
+        PASS [   0.011s] ( 70/157) ephemeral-chat-core invite::tests::decode_short_address
+        PASS [   0.012s] ( 71/157) ephemeral-chat-core invite::tests::decode_non_onion_address
+        PASS [   0.012s] ( 72/157) ephemeral-chat-core invite::tests::future_beyond_skew_rejected
+        PASS [   0.013s] ( 73/157) ephemeral-chat-core invite::tests::expired_invite
+        PASS [   0.015s] ( 74/157) ephemeral-chat-core invite::tests::different_nonce_different_token
+        PASS [   0.015s] ( 75/157) ephemeral-chat-core invite::tests::fresh_invite_with_ttl
+        PASS [   0.011s] ( 76/157) ephemeral-chat-core invite::tests::roundtrip_past_timestamp
+        PASS [   0.012s] ( 77/157) ephemeral-chat-core invite::tests::roundtrip_ff_nonce
+        PASS [   0.016s] ( 78/157) ephemeral-chat-core invite::tests::future_within_skew_accepted
+        PASS [   0.016s] ( 79/157) ephemeral-chat-core invite::tests::no_ttl_skips_expiry
+        PASS [   0.016s] ( 80/157) ephemeral-chat-core invite::tests::roundtrip_basic
+        PASS [   0.011s] ( 81/157) ephemeral-chat-core invite::tests::roundtrip_zero_nonce
+        PASS [   0.012s] ( 82/157) ephemeral-chat-core invite::tests::token_is_contiguous_no_whitespace
+        PASS [   0.011s] ( 83/157) ephemeral-chat-core joiner::tests::close_is_idempotent
+        PASS [   0.013s] ( 84/157) ephemeral-chat-core invite::tests::token_is_deterministic
+        PASS [   0.012s] ( 85/157) ephemeral-chat-core joiner::tests::connect_propagates_tor_error
+        PASS [   0.015s] ( 86/157) ephemeral-chat-core invite::tests::ttl_zero_skips_expiry
+        PASS [   0.014s] ( 87/157) ephemeral-chat-core joiner::tests::connect_calls_tor_with_correct_target
+        PASS [   0.012s] ( 88/157) ephemeral-chat-core joiner::tests::connect_rejects_empty_invite
+        PASS [   0.014s] ( 89/157) ephemeral-chat-core joiner::tests::connect_rejects_expired_invite
+        PASS [   0.011s] ( 90/157) ephemeral-chat-core joiner::tests::drop_calls_close
+        PASS [   0.012s] ( 91/157) ephemeral-chat-core joiner::tests::connect_rejects_invite_with_bad_onion_address
+        PASS [   0.014s] ( 92/157) ephemeral-chat-core joiner::tests::connect_rejects_garbage_invite
+        PASS [   0.011s] ( 93/157) ephemeral-chat-core joiner::tests::handshake_accept_returns_peer_id
+        PASS [   0.013s] ( 94/157) ephemeral-chat-core joiner::tests::connect_rejects_truncated_invite
+        PASS [   0.014s] ( 95/157) ephemeral-chat-core joiner::tests::handshake_invite_nonce_enables_duplicate_detection
+        PASS [   0.015s] ( 96/157) ephemeral-chat-core joiner::tests::handshake_reject_returns_error
+        PASS [   0.012s] ( 97/157) ephemeral-chat-core joiner::tests::run_exits_on_immediate_shutdown
+        PASS [   0.015s] ( 98/157) ephemeral-chat-core joiner::tests::handshake_sends_provided_nonce_on_wire
+        PASS [   0.012s] ( 99/157) ephemeral-chat-core joiner::tests::run_exits_when_event_receiver_dropped
+        PASS [   0.012s] (100/157) ephemeral-chat-core joiner::tests::run_exits_when_message_channel_closes
+        PASS [   0.011s] (101/157) ephemeral-chat-core joiner::tests::run_rapid_message_then_shutdown
+        PASS [   0.009s] (102/157) ephemeral-chat-core room::tests::chat_event_variants_are_pub
+        PASS [   0.011s] (103/157) ephemeral-chat-core joiner::tests::run_shutdown_while_message_in_flight
+        PASS [   0.010s] (104/157) ephemeral-chat-core room::tests::event_stream_ends_on_sender_drop
+        PASS [   0.009s] (105/157) ephemeral-chat-core room::tests::event_stream_is_receiver
+        PASS [   0.009s] (106/157) ephemeral-chat-core room::tests::host_config_and_join_config_exist
+        PASS [   0.009s] (107/157) ephemeral-chat-core room::tests::invite_on_joiner_fails
+        PASS [   0.009s] (108/157) ephemeral-chat-core room::tests::quit_is_idempotent
+        PASS [   0.009s] (109/157) ephemeral-chat-core room::tests::room_handle_is_clone
+        PASS [   0.009s] (110/157) ephemeral-chat-core room::tests::room_handle_is_send_sync
+        PASS [   0.009s] (111/157) ephemeral-chat-core room::tests::send_after_quit_fails
+        PASS [   0.009s] (112/157) ephemeral-chat-core wire::tests::malformed_json_rejected
+        PASS [   0.009s] (113/157) ephemeral-chat-core wire::tests::header_is_big_endian
+        PASS [   0.009s] (114/157) ephemeral-chat-core wire::tests::oversized_decode_rejected
+        PASS [   0.009s] (115/157) ephemeral-chat-core wire::tests::oversized_encode_rejected
+        PASS [   0.009s] (116/157) ephemeral-chat-core wire::tests::read_frame_complete
+        PASS [   0.009s] (117/157) ephemeral-chat-core wire::tests::roundtrip_ping_pong
+        PASS [   0.009s] (118/157) ephemeral-chat-core wire::tests::roundtrip_system
+        PASS [   0.009s] (119/157) ephemeral-chat-core wire::tests::roundtrip_chat
+        PASS [   0.009s] (120/157) ephemeral-chat-core wire::tests::roundtrip_unicode
+        PASS [   0.009s] (121/157) ephemeral-chat-core wire::tests::short_data_rejected
+        PASS [   0.009s] (122/157) ephemeral-chat-core wire::tests::truncated_payload_rejected
+        PASS [   0.009s] (123/157) ephemeral-chat-core wire::tests::write_frame_roundtrip
+        PASS [   0.009s] (124/157) ephemeral-chat-core wire::tests::zero_length_rejected
+        PASS [   0.113s] (125/157) ephemeral-chat-core joiner::tests::run_emits_correct_peer_name
+        PASS [   0.116s] (126/157) ephemeral-chat-core joiner::tests::run_exits_on_shutdown_after_delay
+        PASS [   0.114s] (127/157) ephemeral-chat-core joiner::tests::run_forwards_messages_to_events
+        PASS [   0.114s] (128/157) ephemeral-chat-core joiner::tests::run_handles_empty_message
+        PASS [   0.116s] (129/157) ephemeral-chat-core joiner::tests::run_handles_long_message
+        PASS [   0.009s] (130/157) ephemeral-chat-core::joiner_integration close_is_idempotent
+        PASS [   0.112s] (131/157) ephemeral-chat-core joiner::tests::run_handles_unicode_message
+        PASS [   0.009s] (132/157) ephemeral-chat-core::joiner_integration connect_calls_tor_with_correct_target
+        PASS [   0.009s] (133/157) ephemeral-chat-core::joiner_integration connect_propagates_tor_error
+        PASS [   0.008s] (134/157) ephemeral-chat-core::joiner_integration connect_rejects_empty_invite
+        PASS [   0.009s] (135/157) ephemeral-chat-core::joiner_integration connect_rejects_garbage_invite
+        PASS [   0.009s] (136/157) ephemeral-chat-core::joiner_integration connect_rejects_expired_invite
+        PASS [   0.009s] (137/157) ephemeral-chat-core::joiner_integration connect_rejects_invite_with_bad_onion_address
+        PASS [   0.009s] (138/157) ephemeral-chat-core::joiner_integration connect_rejects_truncated_invite
+        PASS [   0.008s] (139/157) ephemeral-chat-core::joiner_integration drop_calls_close
+        PASS [   0.008s] (140/157) ephemeral-chat-core::joiner_integration run_exits_on_immediate_shutdown
+        PASS [   0.008s] (141/157) ephemeral-chat-core::joiner_integration run_exits_when_event_receiver_dropped
+        PASS [   0.009s] (142/157) ephemeral-chat-core::joiner_integration run_exits_when_message_channel_closes
+        PASS [   0.214s] (143/157) ephemeral-chat-core joiner::tests::run_forwards_multiple_messages_in_order
+        PASS [   0.111s] (144/157) ephemeral-chat-core::joiner_integration run_emits_peer_name_in_events
+        PASS [   0.110s] (145/157) ephemeral-chat-core::joiner_integration run_exits_on_shutdown_after_delay
+        PASS [   0.010s] (146/157) ephemeral-chat-core::joiner_integration run_rapid_messages_then_shutdown
+        PASS [   0.110s] (147/157) ephemeral-chat-core::joiner_integration run_forwards_single_message_to_events
+        PASS [   0.110s] (148/157) ephemeral-chat-core::joiner_integration run_handles_empty_message
+        PASS [   0.009s] (149/157) ephemeral-chat-core::joiner_integration run_shutdown_while_message_in_flight
+        PASS [   0.110s] (150/157) ephemeral-chat-core::joiner_integration run_handles_long_message
+        PASS [   0.113s] (151/157) ephemeral-chat-core::joiner_integration run_handles_unicode_message
+        PASS [   0.210s] (152/157) ephemeral-chat-core::joiner_integration run_forwards_messages_in_order
+        PASS [   0.512s] (153/157) ephemeral-chat-core::integration integration_room_close_notifies_joiner
+        PASS [   1.014s] (154/157) ephemeral-chat-core::integration integration_host_send_message_no_peers
+        PASS [   1.013s] (155/157) ephemeral-chat-core::integration integration_peer_join_fires
+        PASS [   1.013s] (156/157) ephemeral-chat-core::integration integration_peer_leave_on_joiner_quit
+        PASS [   1.515s] (157/157) ephemeral-chat-core::integration integration_messages_flow_bidirectional
+────────────
+     Summary [   1.690s] 157 tests run: 157 passed, 1 skipped
+[Finished running. Exit status: 0]
