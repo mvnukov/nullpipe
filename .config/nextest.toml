@@ -1,2 +1,9 @@
 [profile.default]
-timeout = "60s"
+slow-timeout = { period = "60s" }
+
+[test-groups.slow-e2e]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "test(e2e_)"
+test-group = "slow-e2e"

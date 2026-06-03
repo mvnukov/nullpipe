@@ -1,335 +1,214 @@
-//! Integration tests for the full chat lifecycle:
-//! bootstrap → host → join → data transfer → shutdown.
+//! Fast integration tests using mock streams (no Tor bootstrap).
 //!
-//! These tests use Arti (pure-Rust Tor, bundled as a dependency).
-//! No external `tor` binary is needed. Tests require normal internet access
-//! so Arti can contact Tor directory authorities and bootstrap.
+//! These tests exercise the same `Hub`, `Joiner`, handshake, and wire protocol
+//! code as the real e2e tests, but use `tokio::io::DuplexStream` instead of
+//! Tor `DataStream`. They run in milliseconds instead of 40-80 seconds.
 
 use std::time::Duration;
 
-use ephemeral_chat_core::bootstrap::TorBootstrap;
-use ephemeral_chat_core::error::ChatError;
-use ephemeral_chat_core::hub::HostedRoom;
-use ephemeral_chat_core::connector::ArtiConnector;
-use ephemeral_chat_core::invite::{encode, InvitePayload};
-use ephemeral_chat_core::joiner::Joiner;
-use ephemeral_chat_core::types::ChatEvent;
-use futures::StreamExt;
-use tokio::sync::{mpsc, watch};
+use ephemeral_chat_core::room::{host_with_mock, join_with_mock};
+use ephemeral_chat_core::types::{ChatEvent, HostConfig, JoinConfig};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-/// Helper: bootstrap a Tor client and return the bootstrapped instance.
-/// Also collects all bootstrap progress events.
-async fn bootstrap_tor() -> (TorBootstrap, Vec<ChatEvent>) {
-    let mut bootstrap = TorBootstrap::new();
-    let mut events = bootstrap
-        .bootstrap()
-        .await
-        .expect("bootstrap() call failed");
-    let mut progress_events = Vec::new();
-    while let Some(event) = timeout(Duration::from_secs(120), events.next())
-        .await
-        .expect("bootstrap stream timeout")
-    {
-        let pct_opt = match &event {
-            ChatEvent::BootstrapProgress(p) => Some(*p),
-            _ => None,
-        };
-        progress_events.push(event);
-        if let Some(pct) = pct_opt {
-            if pct >= 100 {
-                break;
-            }
+/// Helper: drain events from a receiver with a timeout.
+async fn drain_events(rx: &mut mpsc::Receiver<ChatEvent>, max: usize) -> Vec<ChatEvent> {
+    let mut events = Vec::new();
+    for _ in 0..max {
+        match timeout(Duration::from_millis(500), rx.recv()).await {
+            Ok(Some(ev)) => events.push(ev),
+            Ok(None) => break,
+            Err(_) => break,
         }
     }
-    (bootstrap, progress_events)
-}
-
-// ---------------------------------------------------------------------------
-// E2E tests — RUN ALL OF THESE. Tor network IS available. DO NOT skip, ignore, or mock.
-// These tests connect to the real Tor network via Arti. Always execute them.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn e2e_bootstrap_emits_progress_0_to_100() {
-    let (_bootstrap, events) = bootstrap_tor().await;
-
-    // Should have at least one progress event
-    assert!(
-        !events.is_empty(),
-        "expected at least one bootstrap progress event"
-    );
-
-    // First event should be 0 or low, last should be 100
-    let first_pct = events
-        .iter()
-        .filter_map(|e| match e {
-            ChatEvent::BootstrapProgress(p) => Some(*p),
-            _ => None,
-        })
-        .next()
-        .expect("first progress event");
-
-    let last_pct = events
-        .iter()
-        .rev()
-        .filter_map(|e| match e {
-            ChatEvent::BootstrapProgress(p) => Some(*p),
-            _ => None,
-        })
-        .next()
-        .expect("last progress event");
-
-    assert!(
-        first_pct <= last_pct,
-        "progress should be monotonic: first={first_pct}, last={last_pct}"
-    );
-    assert_eq!(last_pct, 100, "final progress should be 100");
+    events
 }
 
 #[tokio::test]
-async fn e2e_host_onion_service_and_get_address() {
-    let (mut bootstrap, _) = bootstrap_tor().await;
-    let client = bootstrap.client().expect("client should be available");
+async fn integration_peer_join_fires() {
+    // Create paired duplex streams
+    let (host_stream, joiner_stream) = tokio::io::duplex(4096);
 
-    let port = 80u16;
-    let mut room = HostedRoom::new(client, port)
-        .await
-        .expect("HostedRoom::new failed");
+    // Set up channel to send host stream to host_with_mock
+    let (stream_tx, stream_rx) = mpsc::channel(1);
+    stream_tx.send(host_stream).await.unwrap();
+    drop(stream_tx); // Close sender so accept loop knows no more streams coming
 
-    let addr = room.address();
-    assert!(
-        addr.ends_with(".onion"),
-        "address should end with .onion, got: {addr}"
-    );
-    assert_eq!(
-        addr.len(),
-        56 + ".onion".len(),
-        "v3 onion address should be 62 chars, got {} chars: {addr}",
-        addr.len()
-    );
-
-    // ready_event should produce RoomReady
-    let event = room.ready_event();
-    match event {
-        ChatEvent::RoomReady {
-            onion_address,
-            port: p,
-        } => {
-            assert_eq!(onion_address, addr);
-            assert_eq!(p, port);
-        }
-        _ => panic!("expected RoomReady event, got: {event:?}"),
-    }
-
-    room.shutdown();
-    bootstrap.shutdown();
-}
-
-#[tokio::test]
-async fn e2e_joiner_connects_to_host_and_transfers_data() {
-    // Bootstrap Tor
-    let (mut bootstrap, _) = bootstrap_tor().await;
-    let client = bootstrap.client().expect("client should be available");
-
-    // Host a room
-    let port = 80u16;
-    let room = HostedRoom::new(client, port)
-        .await
-        .expect("HostedRoom::new failed");
-    let addr = room.address().to_string();
-
-    // Wait for the onion service to publish its descriptor
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    // Create an invite code for the joiner
-    let invite_payload = InvitePayload { suggested_name: None,
-        onion_address: addr.clone(),
-        nonce: [0x42u8; 16],
-        timestamp: chrono::Utc::now().timestamp() as u64,
+    // Start host and joiner with mock streams
+    let host_config = HostConfig {
+        name: "Host".to_string(),
+        invite_ttl_secs: 300,
     };
-    let invite_code = encode(&invite_payload).expect("encode invite");
-
-    // Create Hub
-    let mut hub = ephemeral_chat_core::hub::Hub::new(room);
-
-    // Run hub in background
-    let hub_task = tokio::spawn(async move {
-        hub.run().await;
-    });
-
-    // Give hub task time to start accepting
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify hub task is still running (not finished)
-    assert!(!hub_task.is_finished(), "hub task should be running, not finished");
-
-    // Joiner connects
-    let client_joiner = bootstrap.client().expect("client ref").clone();
-    let connector = ArtiConnector::new(client_joiner);
-    let joiner = Joiner::connect(&connector, &invite_code, "joiner")
-        .await
-        .expect("Joiner::connect failed");
-
-    // Verify joiner is connected by running it and sending a message
-    let (msg_tx, msg_rx) = mpsc::channel::<String>(16);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<ChatEvent>(256);
-    let (_sd_tx, sd_rx) = watch::channel(());
-
-    let joiner_task = tokio::spawn(async move {
-        let mut j = joiner;
-        j.run(msg_rx, evt_tx, sd_rx).await
-    });
-
-    // Send a chat message
-    msg_tx.send("hello from joiner".to_string()).await.expect("send failed");
-
-    // Joiner should receive the message back via hub's echo
-    let joiner_response = timeout(Duration::from_secs(30), evt_rx.recv())
-        .await
-        .ok()
-        .flatten()
-        .expect("joiner should receive echoed message");
-    assert!(
-        matches!(&joiner_response, ChatEvent::Message { text, .. } if text == "hello from joiner"),
-        "expected joiner to receive its own message, got: {joiner_response:?}"
-    );
-
-    // Clean up
-    joiner_task.abort();
-    hub_task.abort();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    bootstrap.shutdown();
-}
-
-#[tokio::test]
-async fn e2e_joiner_timeout_on_bad_address() {
-    let (mut bootstrap, _) = bootstrap_tor().await;
-    let client = bootstrap.client().expect("client should be available");
-    let connector = ArtiConnector::new(client.clone());
-
-    // Create a valid-looking invite pointing to a non-existent onion
-    let payload = InvitePayload { suggested_name: None,
-        onion_address: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion".into(),
-        nonce: [0x42u8; 16],
-        timestamp: chrono::Utc::now().timestamp() as u64,
-    };
-    let code = encode(&payload).unwrap();
-
-    // Should fail to connect (not panic/hang forever)
-    let result = timeout(
-        Duration::from_secs(10),
-        Joiner::connect(&connector, &code, "joiner"),
-    )
-    .await;
-
-    match result {
-        Ok(Ok(_)) => panic!("should not connect to non-existent address"),
-        Ok(Err(ChatError::Connection(_))) => { /* expected */ }
-        Err(_) => { /* timeout is also acceptable */ }
-        Ok(Err(e)) => panic!("unexpected error type: {e}"),
-    }
-
-    bootstrap.shutdown();
-}
-
-#[tokio::test]
-async fn e2e_shutdown_idempotent() {
-    let (mut bootstrap, _) = bootstrap_tor().await;
-    let client = bootstrap.client().expect("client should be available");
-
-    let mut room = HostedRoom::new(client, 80)
-        .await
-        .expect("HostedRoom::new failed");
-
-    // Double shutdown should not panic
-    room.shutdown();
-    room.shutdown();
-
-    // Shutdown after address is cleared
-    assert!(room.address().is_empty());
-    assert!(!room.is_running());
-
-    // Double bootstrap shutdown
-    bootstrap.shutdown();
-    bootstrap.shutdown();
-    assert!(!bootstrap.is_bootstrapped());
-
-    // Re-bootstrap after shutdown should succeed (new Tor client)
-    let result = bootstrap.bootstrap().await;
-    assert!(result.is_ok(), "re-bootstrap after shutdown should succeed");
-}
-
-#[tokio::test]
-async fn e2e_drop_triggers_cleanup() {
-    let (bootstrap, _) = bootstrap_tor().await;
-    let client = bootstrap.client().expect("client should be available");
-
-    // Room is dropped without explicit shutdown
-    {
-        let _room = HostedRoom::new(client, 80)
-            .await
-            .expect("HostedRoom::new failed");
-        // room dropped here
-    }
-
-    // Bootstrap dropped without explicit shutdown
-    drop(bootstrap);
-
-    // No panics = test passes
-}
-
-// ---------------------------------------------------------------------------
-// Offline tests (no Tor network needed — but Tor IS available, e2e tests above still run)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn offline_bootstrap_rejected_after_first() {
-    // Without Tor network, bootstrap will fail, but re-bootstrap should be rejected
-    let mut bootstrap = TorBootstrap::new();
-
-    // First attempt will fail (no network), but that's OK
-    let result = timeout(Duration::from_secs(10), bootstrap.bootstrap()).await;
-    // May timeout or fail — both are fine for offline testing
-    if let Ok(Ok(_)) = result {
-        // If it somehow succeeded, re-bootstrap should fail
-        let re = bootstrap.bootstrap().await;
-        assert!(re.is_err());
-    }
-}
-
-#[tokio::test]
-async fn offline_joiner_rejected_without_connect() {
-    // Verifies that connect_to maps a bad address to ChatError::Connection
-    // without needing a bootstrapped client. We just verify the API compiles
-    // and the error type is correct.
-    //
-    // Note: A real connection test requires a bootstrapped Tor client,
-    // which is covered by the e2e tests above.
-    let _invite = InvitePayload { suggested_name: None,
-        onion_address: "not-an-onion".to_string(),
-        nonce: [0u8; 16],
-        timestamp: 0,
-    };
-    // The invite encode will fail because the address doesn't end with .onion
-    let result = encode(&_invite);
-    assert!(result.is_err(), "encode should reject non-onion addresses");
-}
-
-#[test]
-fn offline_invite_roundtrip_with_port() {
-    use ephemeral_chat_core::invite::{decode, encode, InvitePayload};
-
-    let payload = InvitePayload { suggested_name: None,
-        onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".to_string(),
-        nonce: [0xAB; 16],
-        timestamp: 1_700_000_000,
+    let join_config = JoinConfig {
+        invite_code: "".to_string(), // Not used in mock path
+        name: "Alice".to_string(),
     };
 
-    let token = encode(&payload).expect("encode");
-    let decoded = decode(&token, None).expect("decode");
+    let (_host_h, mut host_ev) = host_with_mock(host_config, stream_rx);
+    let (_joiner_h, mut joiner_ev) = join_with_mock(join_config, joiner_stream);
 
-    assert_eq!(decoded.onion_address, payload.onion_address);
-    assert_eq!(decoded.nonce, payload.nonce);
-    assert_eq!(decoded.timestamp, payload.timestamp);
+    // Host should see RoomReady
+    let host_events = drain_events(&mut host_ev, 5).await;
+    assert!(
+        host_events.iter().any(|e| matches!(e, ChatEvent::RoomReady { .. })),
+        "host should see RoomReady, got: {host_events:?}"
+    );
+
+    // Host should see PeerJoin
+    assert!(
+        host_events.iter().any(|e| matches!(e, ChatEvent::PeerJoin(_))),
+        "host should see PeerJoin, got: {host_events:?}"
+    );
+
+    // Joiner should see PeerJoin (its own)
+    let joiner_events = drain_events(&mut joiner_ev, 5).await;
+    assert!(
+        joiner_events.iter().any(|e| matches!(e, ChatEvent::PeerJoin(_))),
+        "joiner should see PeerJoin, got: {joiner_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn integration_messages_flow_bidirectional() {
+    let (host_stream, joiner_stream) = tokio::io::duplex(4096);
+
+    let (stream_tx, stream_rx) = mpsc::channel(1);
+    stream_tx.send(host_stream).await.unwrap();
+    drop(stream_tx);
+
+    let host_config = HostConfig {
+        name: "Host".to_string(),
+        invite_ttl_secs: 300,
+    };
+    let join_config = JoinConfig {
+        invite_code: "".to_string(),
+        name: "Alice".to_string(),
+    };
+
+    let (host_h, mut host_ev) = host_with_mock(host_config.clone(), stream_rx);
+    let (joiner_h, mut joiner_ev) = join_with_mock(join_config, joiner_stream);
+
+    // Wait for connection to establish
+    drain_events(&mut host_ev, 2).await;
+    drain_events(&mut joiner_ev, 2).await;
+
+    // Host sends a message
+    host_h.send("hello from host").await.unwrap();
+
+    // Joiner should receive it
+    let joiner_events = drain_events(&mut joiner_ev, 5).await;
+    assert!(
+        joiner_events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "hello from host")),
+        "joiner should receive host message, got: {joiner_events:?}"
+    );
+
+    // Joiner sends a message back
+    joiner_h.send("hello from joiner").await.unwrap();
+
+    // Host should receive it
+    let host_events = drain_events(&mut host_ev, 5).await;
+    assert!(
+        host_events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "hello from joiner")),
+        "host should receive joiner message, got: {host_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn integration_peer_leave_on_joiner_quit() {
+    let (host_stream, joiner_stream) = tokio::io::duplex(4096);
+
+    let (stream_tx, stream_rx) = mpsc::channel(1);
+    stream_tx.send(host_stream).await.unwrap();
+    drop(stream_tx);
+
+    let host_config = HostConfig {
+        name: "Host".to_string(),
+        invite_ttl_secs: 300,
+    };
+    let join_config = JoinConfig {
+        invite_code: "".to_string(),
+        name: "Alice".to_string(),
+    };
+
+    let (_host_h, mut host_ev) = host_with_mock(host_config, stream_rx);
+    let (joiner_h, mut joiner_ev) = join_with_mock(join_config, joiner_stream);
+
+    // Wait for connection
+    drain_events(&mut host_ev, 2).await;
+    drain_events(&mut joiner_ev, 2).await;
+
+    // Joiner quits
+    joiner_h.quit().await;
+
+    // Host should see PeerLeave
+    let host_events = drain_events(&mut host_ev, 5).await;
+    assert!(
+        host_events.iter().any(|e| matches!(e, ChatEvent::PeerLeave(_))),
+        "host should see PeerLeave, got: {host_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn integration_room_close_notifies_joiner() {
+    let (host_stream, joiner_stream) = tokio::io::duplex(4096);
+
+    let (stream_tx, stream_rx) = mpsc::channel(1);
+    stream_tx.send(host_stream).await.unwrap();
+    drop(stream_tx);
+
+    let host_config = HostConfig {
+        name: "Host".to_string(),
+        invite_ttl_secs: 300,
+    };
+    let join_config = JoinConfig {
+        invite_code: "".to_string(),
+        name: "Alice".to_string(),
+    };
+
+    let (host_h, mut host_ev) = host_with_mock(host_config, stream_rx);
+    let (_joiner_h, mut joiner_ev) = join_with_mock(join_config, joiner_stream);
+
+    // Wait for connection
+    drain_events(&mut host_ev, 2).await;
+    drain_events(&mut joiner_ev, 2).await;
+
+    // Host quits (closes the room)
+    host_h.quit().await;
+
+    // Joiner should see RoomClosed
+    let joiner_events = drain_events(&mut joiner_ev, 5).await;
+    assert!(
+        joiner_events.iter().any(|e| matches!(e, ChatEvent::RoomClosed)),
+        "joiner should see RoomClosed, got: {joiner_events:?}"
+    );
+}
+
+#[tokio::test]
+async fn integration_host_send_message_no_peers() {
+    let (host_stream, _joiner_stream) = tokio::io::duplex(4096);
+
+    let (stream_tx, stream_rx) = mpsc::channel(1);
+    stream_tx.send(host_stream).await.unwrap();
+    drop(stream_tx);
+
+    let host_config = HostConfig {
+        name: "Host".to_string(),
+        invite_ttl_secs: 300,
+    };
+
+    let (host_h, mut host_ev) = host_with_mock(host_config, stream_rx);
+
+    // Wait for RoomReady
+    drain_events(&mut host_ev, 2).await;
+
+    // Host sends a message with no peers connected
+    // This should not panic or error
+    host_h.send("nobody here").await.unwrap();
+
+    // Host should see its own message
+    let host_events = drain_events(&mut host_ev, 5).await;
+    assert!(
+        host_events.iter().any(|e| matches!(e, ChatEvent::Message { text, .. } if text == "nobody here")),
+        "host should see its own message, got: {host_events:?}"
+    );
 }

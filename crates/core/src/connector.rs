@@ -93,4 +93,23 @@ pub mod mock {
                 .unwrap_or_else(|| Err(ChatError::Connection("mock: result consumed".into())))
         }
     }
+    /// Mock acceptor for testing — receives `DuplexStream`s instead of Tor streams.
+    ///
+    /// Mirrors `HostedRoom::accept_peer()` but without Tor. Useful for fast
+    /// integration tests that exercise the same handshake and wire protocol code.
+    pub struct MockAcceptor {
+        stream_rx: tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>,
+    }
+
+    impl MockAcceptor {
+        /// Create a new `MockAcceptor` from a receiver end of a duplex stream channel.
+        pub fn new(rx: tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>) -> Self {
+            Self { stream_rx: rx }
+        }
+
+        /// Accept the next mock stream, or `None` if the sender was dropped.
+        pub async fn accept(&mut self) -> Option<tokio::io::DuplexStream> {
+            self.stream_rx.recv().await
+        }
+    }
 }
