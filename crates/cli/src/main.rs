@@ -10,7 +10,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ephemeral_chat_core::{host, join, ChatEvent, HostConfig, JoinConfig, PeerInfo, RoomHandle};
+use ephemeral_chat_core::factory::{RoomConfig, RoomFactory};
+use ephemeral_chat_core::{ChatEvent, PeerInfo, RoomHandle};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -535,22 +536,17 @@ fn install_panic_hook() {
 }
 
 fn create_room(name: &str, command: &Commands) -> (RoomHandle, mpsc::Receiver<ChatEvent>) {
-    match command {
-        Commands::Host { invite_ttl, .. } => {
-            let config = HostConfig {
-                name: name.into(),
-                invite_ttl_secs: *invite_ttl,
-            };
-            host(config)
-        }
-        Commands::Join { invite_code, .. } => {
-            let config = JoinConfig {
-                name: name.into(),
-                invite_code: invite_code.clone(),
-            };
-            join(config)
-        }
-    }
+    let config = match command {
+        Commands::Host { invite_ttl, .. } => RoomConfig::Host {
+            name: name.into(),
+            invite_ttl_secs: *invite_ttl,
+        },
+        Commands::Join { invite_code, .. } => RoomConfig::Join {
+            name: name.into(),
+            invite_code: invite_code.clone(),
+        },
+    };
+    RoomFactory::create(config)
 }
 
 // ---------------------------------------------------------------------------
