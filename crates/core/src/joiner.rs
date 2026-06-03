@@ -87,7 +87,7 @@ impl Joiner {
         let stream = tor.connect(&payload.onion_address, 80).await?;
 
         // 4. HANDSHAKE — exchange nonce, register name
-        let (peer_id, stream) = Self::handshake(stream, effective_name).await?;
+        let (peer_id, stream) = Self::handshake(stream, effective_name, payload.nonce).await?;
 
         // 5. RETURN ready-to-run Joiner
         Ok(Self {
@@ -99,13 +99,12 @@ impl Joiner {
 
     /// Internal: wire-level handshake on a fresh stream.
     ///
-    /// Called by [`Joiner::connect`]. Generates nonce+discriminator, writes 32 bytes,
-    /// reads accept/reject byte, sends display name as first wire message.
-    async fn handshake<S>(mut stream: S, name: &str) -> Result<(PeerId, S)>
+    /// Called by [`Joiner::connect`]. Writes nonce+discriminator, reads accept/reject,
+    /// sends display name as first wire message.
+    async fn handshake<S>(mut stream: S, name: &str, nonce: [u8; 16]) -> Result<(PeerId, S)>
     where
         S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
     {
-        let nonce: [u8; 16] = rand::random();
         let discriminator: [u8; 16] = rand::random();
 
         // Write 32-byte handshake: nonce || discriminator
@@ -530,7 +529,7 @@ mod tests {
         let (client, hub) = tokio::io::duplex(1024);
 
         let hub_task = tokio::spawn(simulate_hub(hub, 0));
-        let (peer_id, _stream) = Joiner::handshake(client, "alice").await.unwrap();
+        let (peer_id, _stream) = Joiner::handshake(client, "alice", [0u8; 16]).await.unwrap();
         hub_task.await.unwrap();
 
         assert!(!peer_id.0.is_empty());
@@ -541,11 +540,136 @@ mod tests {
         let (client, hub) = tokio::io::duplex(1024);
 
         let hub_task = tokio::spawn(simulate_hub(hub, 1));
-        let result = Joiner::handshake(client, "alice").await;
+        let result = Joiner::handshake(client, "alice", [0u8; 16]).await;
         hub_task.await.unwrap();
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("rejected"));
+    }
+
+    #[tokio::test]
+    async fn handshake_sends_provided_nonce_on_wire() {
+        // Verifies that Joiner::handshake sends the nonce we pass as argument
+        // on the wire — NOT a random nonce. This is the fix for the duplicate
+        // invite bug (P1).
+        let expected_nonce = [
+            0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let (joiner, mut hub_rw) = tokio::io::duplex(1024);
+
+        // Hub side: capture the handshake bytes and verify the nonce
+        let hub_task = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 32];
+            hub_rw.read_exact(&mut buf).await.unwrap();
+            let actual_nonce: [u8; 16] = buf[..16].try_into().unwrap();
+
+            // Accept
+            hub_rw.write_all(&[0]).await.unwrap();
+            hub_rw.flush().await.unwrap();
+
+            // Drain the name message so handshake completes
+            let mut len_buf = [0u8; 4];
+            hub_rw.read_exact(&mut len_buf).await.unwrap();
+            let len = u32::from_be_bytes(len_buf) as usize;
+            let mut rest = vec![0u8; len];
+            hub_rw.read_exact(&mut rest).await.unwrap();
+
+            actual_nonce
+        });
+
+        let _ = Joiner::handshake(joiner, "test", expected_nonce)
+            .await
+            .unwrap();
+        let observed_nonce = hub_task.await.unwrap();
+
+        assert_eq!(
+            observed_nonce, expected_nonce,
+            "Joiner::handshake must send the provided nonce on the wire, \
+             not a random one\nexpected: {expected_nonce:02x?}\nactual:   {observed_nonce:02x?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn handshake_invite_nonce_enables_duplicate_detection() {
+        // Full flow: joiner sends invite nonce → hub consumes it →
+        // second attempt with same nonce is rejected.
+        // This is the end-to-end proof that the fix works.
+        use std::collections::HashSet;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let invite_nonce = [0x42u8; 16];
+        let nonces: Arc<Mutex<HashSet<[u8; 16]>>> =
+            Arc::new(Mutex::new(HashSet::new()));
+
+        // ── First connection: joiner sends invite nonce, hub accepts ──
+        {
+            let (c1, h1) = tokio::io::duplex(1024);
+            let nonces_c1 = nonces.clone();
+
+            let hub1 = tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let (mut r, mut w) = tokio::io::split(h1);
+
+                let mut buf = [0u8; 32];
+                r.read_exact(&mut buf).await.unwrap();
+                let received: [u8; 16] = buf[..16].try_into().unwrap();
+                assert_eq!(received, invite_nonce,
+                    "hub must receive the invite nonce");
+
+                // Consume nonce (hub logic)
+                let mut set = nonces_c1.lock().await;
+                assert!(!set.contains(&received),
+                    "nonce should be fresh");
+                set.insert(received);
+                drop(set);
+
+                w.write_all(&[0]).await.unwrap(); // accept
+                w.flush().await.unwrap();
+
+                // Drain name
+                let mut len_buf = [0u8; 4];
+                r.read_exact(&mut len_buf).await.unwrap();
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut name = vec![0u8; len];
+                r.read_exact(&mut name).await.unwrap();
+            });
+
+            let r1 = Joiner::handshake(c1, "alice", invite_nonce).await;
+            assert!(r1.is_ok(), "first use of invite nonce must succeed");
+            hub1.await.unwrap();
+        }
+
+        // ── Second connection with same nonce: must be rejected ──
+        {
+            let (c2, h2) = tokio::io::duplex(1024);
+
+            let hub2 = tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let (mut r, mut w) = tokio::io::split(h2);
+
+                let mut buf = [0u8; 32];
+                r.read_exact(&mut buf).await.unwrap();
+                let received: [u8; 16] = buf[..16].try_into().unwrap();
+                assert_eq!(received, invite_nonce,
+                    "hub must receive the invite nonce (same code)");
+
+                let set = nonces.lock().await;
+                if set.contains(&received) {
+                    w.write_all(&[1]).await.unwrap(); // reject
+                    w.flush().await.unwrap();
+                } else {
+                    panic!("nonce should already be consumed");
+                }
+            });
+
+            let r2 = Joiner::handshake(c2, "alice", invite_nonce).await;
+            assert!(r2.is_err(),
+                "second use of same invite nonce must be rejected");
+            hub2.await.unwrap();
+        }
     }
 
     #[tokio::test]
