@@ -716,7 +716,6 @@ pub fn join(config: JoinConfig) -> (RoomHandle, EventStream) {
         shutdown_rx,
         send_rx,
         config,
-        Arc::clone(&inner.peers),
         Arc::clone(&inner.tor),
     ));
 
@@ -728,7 +727,6 @@ async fn joiner_task(
     mut shutdown_rx: watch::Receiver<()>,
     send_rx: mpsc::Receiver<String>,
     config: JoinConfig,
-    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
     tor: Arc<std::sync::Mutex<Option<TorBootstrap>>>,
 ) {
     info!("joiner: starting");
@@ -776,17 +774,13 @@ async fn joiner_task(
         }
     };
 
-    // Register peer
+    // Emit PeerJoin event for self
     let joined_at = std::time::Instant::now();
     let my_info = PeerInfo {
         id: joiner.peer_id.clone(),
         name: joiner.name.clone(),
         joined_at,
     };
-    {
-        let mut map = peers.write().await;
-        map.insert(joiner.peer_id.clone(), my_info.clone());
-    }
     let _ = event_tx.try_send(ChatEvent::PeerJoin(my_info));
 
     // Run the joiner main loop
@@ -794,12 +788,6 @@ async fn joiner_task(
     
     if let Err(e) = result {
         let _ = event_tx.try_send(ChatEvent::Error(e));
-    }
-    
-    // Deregister peer
-    {
-        let mut map = peers.write().await;
-        map.remove(&joiner.peer_id);
     }
     
     let _ = event_tx.try_send(ChatEvent::RoomClosed);
