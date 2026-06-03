@@ -300,6 +300,14 @@ impl App {
                     let _ = tx.send(CmdResult::Quit);
                 });
             }
+            "help" => {
+                self.push("system".into(), "available commands:".into(), true);
+                self.push("system".into(), "  /invite [name]  — generate an invite code".into(), true);
+                self.push("system".into(), "  /peers         — list connected peers".into(), true);
+                self.push("system".into(), "  /help          — show this help".into(), true);
+                self.push("system".into(), "  /quit          — leave the room".into(), true);
+            }
+
             _ => {
                 self.push("system".into(), format!("unknown command: /{}", cmd), true);
             }
