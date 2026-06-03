@@ -5,6 +5,8 @@ pub mod invite;
 pub mod joiner;
 pub mod room;
 pub mod connector;
+pub mod factory;
+
 pub mod types;
 pub(crate) mod wire;
 
