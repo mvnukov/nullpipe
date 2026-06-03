@@ -4,6 +4,8 @@ use arti_client::config::TorClientConfigBuilder;
 use arti_client::{TorClient, TorClientConfig};
 use futures::{Stream, StreamExt};
 use std::path::PathBuf;
+use tempfile::TempDir;
+
 use tokio::sync::{mpsc, watch};
 use tor_rtcompat::PreferredRuntime;
 use tracing::{error, info};
@@ -15,6 +17,7 @@ use crate::types::ChatEvent;
 pub struct TorBootstrap {
     client: Option<TorClient<PreferredRuntime>>,
     bootstrapped: bool,
+    temp_dir: Option<TempDir>,
 }
 
 impl TorBootstrap {
@@ -23,6 +26,7 @@ impl TorBootstrap {
         Self {
             client: None,
             bootstrapped: false,
+            temp_dir: None,
         }
     }
 
@@ -38,7 +42,18 @@ impl TorBootstrap {
         }
 
         info!("bootstrapping Tor client");
-        let config = build_config()?;
+
+        let (config, temp_dir) = match std::env::var("EPHEMERAL_CHAT_STATE_DIR") {
+            Ok(dir) => (build_config(PathBuf::from(dir))?, None),
+            Err(_) => {
+                let temp = tempfile::Builder::new()
+                    .prefix("ephemeral-chat-")
+                    .tempdir()
+                    .map_err(|e| ChatError::Connection(format!("create temp dir: {e}")))?;
+                (build_config(temp.path().to_path_buf())?, Some(temp))
+            }
+        };
+        self.temp_dir = temp_dir;
 
         // Build an unbootstrapped client so we can subscribe to progress events
         let client = TorClient::builder()
@@ -128,6 +143,9 @@ impl TorBootstrap {
             info!("Tor client shut down");
         }
         self.bootstrapped = false;
+        if self.temp_dir.take().is_some() {
+            info!("cleaned up temp directory");
+        }
     }
 
     /// Whether the client is bootstrapped.
@@ -199,18 +217,12 @@ impl Default for TorBootstrap {
 // Config helpers
 // ---------------------------------------------------------------------------
 
-/// Build a TorClientConfig with an isolated arti state directory.
+/// Build a TorClientConfig under an isolated root directory.
 ///
-/// Each process gets its own unique temp directory so concurrent `chat`
-/// instances never contend on state lockfiles.
-///
-/// When `EPHEMERAL_CHAT_STATE_DIR` is set, uses that as the root instead
-/// of the system temp directory (useful for tests that need cleanup).
-fn build_config() -> crate::error::Result<TorClientConfig> {
-    let root = match std::env::var("EPHEMERAL_CHAT_STATE_DIR") {
-        Ok(dir) => PathBuf::from(dir),
-        Err(_) => std::env::temp_dir().join(format!("ephemeral-chat-{}-{}", std::process::id(), rand::random::<u64>())),
-    };
+/// Creates `state/` and `cache/` subdirectories under `root` and sets
+/// 0700 permissions (arti's fs_mistrust requires it). The caller owns
+/// the lifecycle of `root`.
+fn build_config(root: PathBuf) -> crate::error::Result<TorClientConfig> {
     let state_dir = root.join("state");
     let cache_dir = root.join("cache");
     std::fs::create_dir_all(&state_dir)
