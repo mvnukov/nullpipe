@@ -245,7 +245,7 @@ impl App {
             return;
         }
 
-        if let Some(cmd) = text.strip_prefix('/') {
+        if text.starts_with('/') {
             self.dispatch_command(&text[1..]);
             return;
         }

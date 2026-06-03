@@ -350,7 +350,7 @@ fn cli_joiner_can_send_messages_headless() {
     // This test verifies that joiners can send messages in headless mode.
     // Bug: room_ready was only set for hosts, preventing joiners from sending.
     
-    use std::io::{Write, BufRead, BufReader};
+    use std::io::Write;
     use std::time::Duration;
     
     let state_dir = std::env::temp_dir()
@@ -373,9 +373,8 @@ fn cli_joiner_can_send_messages_headless() {
     std::thread::sleep(Duration::from_secs(25));
     
     // Read stdout to get invite code
-    let host_stdout = host.stdout.take().expect("host should have stdout");
-    let mut host_reader = BufReader::new(host_stdout);
-    let mut invite_code = String::new();
+    let _host_stdout = host.stdout.take().expect("host should have stdout");
+    // TODO: parse invite_code from host stdout for a real e2e join test
     
     // Give it time to output the invite command response
     // For now, we'll just test that joiner doesn't crash when trying to send
