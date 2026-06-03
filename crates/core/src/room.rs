@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use arti_client::DataStream;
+
 use base58::ToBase58;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, watch, Mutex, RwLock};
@@ -32,6 +33,45 @@ const EVENT_CHAN_CAP: usize = 256;
 const SEND_CHAN_CAP: usize = 64;
 const MSG_CHAN_CAP: usize = 128;
 const BROADCAST_CHAN_CAP: usize = 256;
+
+// ---------------------------------------------------------------------------
+// StreamSource trait — generic stream production for accept loop
+// ---------------------------------------------------------------------------
+
+/// Trait abstraction for producing incoming peer streams.
+///
+/// Allows the accept loop to work with both real Tor streams (`DataStream`)
+/// and mock streams (`DuplexStream`) without coupling to either.
+#[async_trait::async_trait]
+pub(crate) trait StreamSource: Send {
+    type Stream: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static;
+    async fn accept(&mut self) -> Option<Self::Stream>;
+
+    /// Shut down the stream source. Default is a no-op.
+    fn shutdown(&mut self) {}
+}
+
+#[async_trait::async_trait]
+impl StreamSource for HostedRoom {
+    type Stream = DataStream;
+
+    async fn accept(&mut self) -> Option<DataStream> {
+        self.accept_peer().await
+    }
+
+    fn shutdown(&mut self) {
+        HostedRoom::shutdown(self);
+    }
+}
+
+#[async_trait::async_trait]
+impl StreamSource for crate::connector::mock::MockAcceptor {
+    type Stream = tokio::io::DuplexStream;
+
+    async fn accept(&mut self) -> Option<tokio::io::DuplexStream> {
+        self.accept().await
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -376,15 +416,17 @@ async fn run_host_loop(
 
 
 /// Accept loop: accepts peer streams and spawns per-connection handlers.
-async fn accept_loop(
-    mut room: HostedRoom,
+async fn accept_loop<Src>(
+    mut source: Src,
     mut shutdown_rx: watch::Receiver<()>,
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
     event_tx: mpsc::Sender<ChatEvent>,
     wire_broadcast: broadcast::Sender<WireMessage>,
     msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
     used_nonces: Arc<Mutex<std::collections::HashSet<[u8; 16]>>>,
-) {
+) where
+    Src: StreamSource,
+{
     info!("host: accept loop started");
 
     loop {
@@ -396,7 +438,7 @@ async fn accept_loop(
                 break;
             }
 
-            stream = room.accept_peer() => {
+            stream = source.accept() => {
                 let Some(stream) = stream else {
                     info!("host: room no longer accepting");
                     break;
@@ -426,7 +468,7 @@ async fn accept_loop(
         }
     }
 
-    room.shutdown();
+    source.shutdown();
     info!("host: accept loop ended");
 }
 
@@ -443,12 +485,14 @@ struct HubPeerCtx {
 
 
 /// Full lifecycle for one accepted peer stream on the hub side.
-async fn handle_hub_connection(
-    stream: DataStream,
+async fn handle_hub_connection<S>(
+    mut stream: S,
     ctx: HubPeerCtx,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+{
     let mut ctx = ctx;
-    let mut stream = stream;
 
     // 1. Handshake
     let (peer_id, name) = hub_handshake(&mut stream, ctx.nonces).await?;
@@ -767,6 +811,426 @@ async fn joiner_task(
     }
 
     info!("joiner: cleanup complete");
+}
+
+// ---------------------------------------------------------------------------
+// Mock constructors for fast integration tests (no Tor bootstrap)
+// ---------------------------------------------------------------------------
+
+/// Create a host that uses mock streams instead of real Tor.
+///
+/// Returns a `(RoomHandle, EventStream)` pair just like [`host()`], but
+/// accepts peers through `stream_rx` instead of an onion service.
+/// Fires `ChatEvent::RoomReady` with a fake address `"mock://test-room"`.
+///
+/// # Usage
+/// ```ignore
+/// let (host_stream, joiner_stream) = tokio::io::duplex(4096);
+/// let (stream_tx, stream_rx) = mpsc::channel(1);
+/// stream_tx.send(host_stream).await.unwrap();
+/// drop(stream_tx); // Close sender so accept loop knows when no more streams
+///
+/// let (host_h, mut host_ev) = host_with_mock(config, stream_rx);
+/// ```
+pub fn host_with_mock(
+    config: HostConfig,
+    stream_rx: tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>,
+) -> (RoomHandle, EventStream) {
+    let (event_tx, event_rx) = mpsc::channel::<ChatEvent>(EVENT_CHAN_CAP);
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let (send_tx, send_rx) = mpsc::channel::<String>(SEND_CHAN_CAP);
+
+    let inner = Arc::new(RoomInner {
+        send_tx: send_tx.clone(),
+        shutdown_tx: shutdown_tx.clone(),
+        invite: Arc::new(std::sync::Mutex::new(None)),
+        peers: Arc::new(RwLock::new(HashMap::new())),
+        quit_flag: AtomicBool::new(false),
+        tor: Arc::new(std::sync::Mutex::new(None)),
+        name: config.name.clone(),
+    });
+
+    tokio::spawn(host_task_mock(
+        event_tx,
+        shutdown_rx,
+        send_rx,
+        config,
+        Arc::clone(&inner.invite),
+        Arc::clone(&inner.peers),
+        stream_rx,
+    ));
+
+    (RoomHandle { inner }, event_rx)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn host_task_mock(
+    event_tx: mpsc::Sender<ChatEvent>,
+    shutdown_rx: watch::Receiver<()>,
+    send_rx: mpsc::Receiver<String>,
+    config: HostConfig,
+    invite_info: Arc<std::sync::Mutex<Option<InviteInfo>>>,
+    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
+    stream_rx: tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>,
+) {
+    info!("host (mock): starting");
+
+    // Fire RoomReady with a fake address
+    let fake_address = "mock://test-room".to_string();
+    let _ = event_tx
+        .send(ChatEvent::RoomReady {
+            onion_address: fake_address.clone(),
+            port: 80,
+        })
+        .await;
+
+    {
+        let mut guard = invite_info.lock().expect("invite lock poisoned");
+        *guard = Some(InviteInfo {
+            onion_address: fake_address,
+            port: 80,
+            ttl_secs: config.invite_ttl_secs,
+        });
+    }
+
+    run_host_loop_mock(
+        event_tx,
+        shutdown_rx,
+        send_rx,
+        config,
+        peers,
+        stream_rx,
+    )
+    .await;
+
+    info!("host (mock): cleanup complete");
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_host_loop_mock(
+    event_tx: mpsc::Sender<ChatEvent>,
+    mut shutdown_rx: watch::Receiver<()>,
+    mut send_rx: mpsc::Receiver<String>,
+    config: HostConfig,
+    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
+    stream_rx: tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>,
+) {
+    let (wire_broadcast_tx, _) = broadcast::channel::<WireMessage>(BROADCAST_CHAN_CAP);
+    let (msg_tx, mut msg_rx) = mpsc::channel::<(PeerId, WireMessage)>(MSG_CHAN_CAP);
+    let used_nonces: Arc<Mutex<std::collections::HashSet<[u8; 16]>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
+
+    let accept_shutdown = shutdown_rx.clone();
+    let accept_peers = Arc::clone(&peers);
+    let accept_event_tx = event_tx.clone();
+    let accept_broadcast = wire_broadcast_tx.clone();
+    let accept_msg_tx = msg_tx.clone();
+    let accept_nonces = Arc::clone(&used_nonces);
+
+    let mock_acceptor = crate::connector::mock::MockAcceptor::new(stream_rx);
+
+    let accept_handle = tokio::spawn(async move {
+        accept_loop(
+            mock_acceptor,
+            accept_shutdown,
+            accept_peers,
+            accept_event_tx,
+            accept_broadcast,
+            accept_msg_tx,
+            accept_nonces,
+        )
+        .await;
+    });
+
+    let event_tx_main = event_tx;
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = shutdown_rx.changed() => {
+                info!("host (mock): shutdown signal received");
+                let _ = event_tx_main.try_send(ChatEvent::RoomClosed);
+                break;
+            }
+
+            text = send_rx.recv() => {
+                let Some(text) = text else {
+                    info!("host (mock): send channel closed");
+                    break;
+                };
+                let msg = WireMessage::chat(&config.name, &text);
+                let event = ChatEvent::Message {
+                    from: PeerId("[hub]".into()),
+                    name: config.name.clone(),
+                    text: text.clone(),
+                };
+                let _ = event_tx_main.try_send(event);
+                let _ = wire_broadcast_tx.send(msg);
+            }
+
+            msg = msg_rx.recv() => {
+                let Some((peer_id, wire_msg)) = msg else {
+                    info!("host (mock): msg channel closed");
+                    break;
+                };
+                if wire_msg.kind == MessageType::Chat {
+                    let event = ChatEvent::Message {
+                        from: peer_id,
+                        name: wire_msg.name,
+                        text: wire_msg.text,
+                    };
+                    let _ = event_tx_main.try_send(event);
+                }
+            }
+        }
+    }
+
+    info!("host (mock): main loop ended, waiting for accept loop");
+
+    accept_handle.abort();
+    let _ = accept_handle.await;
+
+    info!("host (mock): cleanup complete");
+}
+
+/// Create a joiner that uses a pre-connected stream instead of bootstrapping Tor.
+///
+/// Returns a `(RoomHandle, EventStream)` pair just like [`join()`], but
+/// connects through `stream` directly instead of using an invite code and Tor.
+///
+/// # Usage
+/// ```ignore
+/// let (host_stream, joiner_stream) = tokio::io::duplex(4096);
+/// // Send host_stream to host_with_mock's stream_rx
+///
+/// let config = JoinConfig { invite_code: "", name: "Alice" };
+/// let (joiner_h, mut joiner_ev) = join_with_mock(config, joiner_stream);
+/// ```
+pub fn join_with_mock(
+    config: JoinConfig,
+    stream: tokio::io::DuplexStream,
+) -> (RoomHandle, EventStream) {
+    let (event_tx, event_rx) = mpsc::channel::<ChatEvent>(EVENT_CHAN_CAP);
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let (send_tx, send_rx) = mpsc::channel::<String>(SEND_CHAN_CAP);
+
+    let inner = Arc::new(RoomInner {
+        send_tx: send_tx.clone(),
+        shutdown_tx: shutdown_tx.clone(),
+        invite: Arc::new(std::sync::Mutex::new(None)),
+        peers: Arc::new(RwLock::new(HashMap::new())),
+        quit_flag: AtomicBool::new(false),
+        tor: Arc::new(std::sync::Mutex::new(None)),
+        name: config.name.clone(),
+    });
+
+    tokio::spawn(joiner_task_mock(
+        event_tx,
+        shutdown_rx,
+        send_rx,
+        config,
+        Arc::clone(&inner.peers),
+        stream,
+    ));
+
+    (RoomHandle { inner }, event_rx)
+}
+
+async fn joiner_task_mock(
+    event_tx: mpsc::Sender<ChatEvent>,
+    shutdown_rx: watch::Receiver<()>,
+    send_rx: mpsc::Receiver<String>,
+    config: JoinConfig,
+    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
+    stream: tokio::io::DuplexStream,
+) {
+    info!("joiner (mock): starting");
+
+    // Perform handshake directly on the provided stream
+    let mut stream = stream;
+    let (peer_id, name) = match joiner_handshake(&mut stream, &config.name).await {
+        Ok(result) => result,
+        Err(e) => {
+            let _ = event_tx.send(ChatEvent::Error(e)).await;
+            return;
+        }
+    };
+
+    // Register peer
+    let joined_at = std::time::Instant::now();
+    let my_info = PeerInfo {
+        id: peer_id.clone(),
+        name: name.clone(),
+        joined_at,
+    };
+    {
+        let mut map = peers.write().await;
+        map.insert(peer_id.clone(), my_info.clone());
+    }
+    let _ = event_tx.try_send(ChatEvent::PeerJoin(my_info));
+
+    // Split stream and run reader/writer loops similar to Joiner::run
+    let (reader_half, mut writer_half) = tokio::io::split(stream);
+
+    // Spawn reader task
+    let events_tx = event_tx.clone();
+    let reader_handle = tokio::spawn(async move {
+        joiner_reader_loop(reader_half, events_tx).await;
+    });
+
+    // Clone shutdown_rx for the writer task
+    let writer_shutdown = shutdown_rx.clone();
+
+    // Writer loop: forward messages from send_rx to stream
+    let writer_done = tokio::spawn(async move {
+        let mut send_rx = send_rx;
+        let mut writer_shutdown = writer_shutdown;
+        loop {
+            tokio::select! {
+                biased;
+                _ = writer_shutdown.changed() => {
+                    break;
+                }
+                text = send_rx.recv() => {
+                    let Some(text) = text else {
+                        break;
+                    };
+                    let msg = WireMessage::chat(&name, &text);
+                    if let Ok(frame) = encode_message(&msg) {
+                        if writer_half.write_all(&frame).await.is_err() {
+                            break;
+                        }
+                        if writer_half.flush().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Wait for reader or shutdown
+    let mut shutdown_rx = shutdown_rx;
+    let mut reader_handle = reader_handle;
+    tokio::select! {
+        _ = &mut reader_handle => {},
+        _ = shutdown_rx.changed() => {
+            reader_handle.abort();
+        }
+    }
+    writer_done.abort();
+
+    // Deregister peer
+    {
+        let mut map = peers.write().await;
+        map.remove(&peer_id);
+    }
+
+    let _ = event_tx.try_send(ChatEvent::RoomClosed);
+    info!("joiner (mock): cleanup complete");
+}
+
+/// Simplified handshake for the mock joiner path.
+/// Mirrors `Joiner::handshake` but works on any stream type.
+async fn joiner_handshake<S>(
+    mut stream: S,
+    name: &str,
+) -> Result<(PeerId, String)>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    use base58::ToBase58;
+    use tokio::time::timeout;
+
+    let nonce: [u8; 16] = rand::random();
+    let discriminator: [u8; 16] = rand::random();
+
+    // Write 32-byte handshake: nonce || discriminator
+    let mut buf = [0u8; 32];
+    buf[..16].copy_from_slice(&nonce);
+    buf[16..32].copy_from_slice(&discriminator);
+
+    timeout(WRITE_TIMEOUT, stream.write_all(&buf))
+        .await
+        .map_err(|_| ChatError::Connection("handshake write timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake write: {e}")))?;
+    timeout(WRITE_TIMEOUT, stream.flush())
+        .await
+        .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
+
+    // Read accept/reject byte from hub
+    let mut response = [0u8; 1];
+    timeout(READ_TIMEOUT, stream.read_exact(&mut response))
+        .await
+        .map_err(|_| ChatError::Connection("handshake read timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake read: {e}")))?;
+
+    if response[0] != 0 {
+        return Err(ChatError::Connection("handshake rejected by hub".into()));
+    }
+
+    let peer_id = PeerId(discriminator.to_base58());
+
+    // Send display name as first wire message
+    let name_msg = WireMessage::system(name);
+    let frame = encode_message(&name_msg)?;
+    timeout(WRITE_TIMEOUT, stream.write_all(&frame))
+        .await
+        .map_err(|_| ChatError::Connection("handshake name write timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake name write: {e}")))?;
+    timeout(WRITE_TIMEOUT, stream.flush())
+        .await
+        .map_err(|_| ChatError::Connection("handshake name flush timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake name flush: {e}")))?;
+
+    Ok((peer_id, name.to_string()))
+}
+
+/// Reader loop for the mock joiner — reads wire frames and emits events.
+async fn joiner_reader_loop<R>(
+    mut reader: R,
+    events: mpsc::Sender<ChatEvent>,
+) where
+    R: AsyncReadExt + Unpin,
+{
+    loop {
+        match read_frame(&mut reader).await {
+            Ok(frame) => {
+                match crate::wire::decode_message(&frame) {
+                    Ok(wire_msg) => {
+                        match wire_msg.kind {
+                            MessageType::Chat => {
+                                let event = ChatEvent::Message {
+                                    from: PeerId("[peer]".into()), // We don't know the actual peer ID here
+                                    name: wire_msg.name,
+                                    text: wire_msg.text,
+                                };
+                                if events.send(event).await.is_err() {
+                                    break;
+                                }
+                            }
+                            MessageType::Ping => {
+                                // Pong responses would need writer access; simplified for mock
+                            }
+                            MessageType::Pong => {}
+                            MessageType::System => {
+                                // System messages could be emitted as a different event type
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        warn!("joiner (mock): malformed message");
+                        break;
+                    }
+                }
+            }
+            Err(_) => {
+                info!("joiner (mock): reader EOF or error");
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
