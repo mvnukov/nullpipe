@@ -47,7 +47,7 @@ async fn e2e_joiner_connects_receives_messages() {
     .await
     .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (joiner_h, _joiner_ev) = join(JoinConfig {
         name: "alice".into(),
@@ -85,7 +85,7 @@ async fn e2e_joiner_rejects_expired_invite() {
     use ephemeral_chat_core::invite::{encode, InvitePayload};
     
     // Create an expired invite manually
-    let expired_payload = InvitePayload {
+    let expired_payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
         nonce: [0x42u8; 16],
         timestamp: 1_700_000_000, // Expired timestamp
@@ -122,7 +122,7 @@ async fn e2e_joiner_handshake_accepted() {
     .await
     .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (_joiner_h, mut _joiner_ev) = join(JoinConfig {
         name: "alice".into(),
@@ -157,7 +157,7 @@ async fn e2e_joiner_quit_cleans_up() {
     .await
     .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (joiner_h, _joiner_ev) = join(JoinConfig {
         name: "alice".into(),

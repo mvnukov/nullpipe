@@ -143,7 +143,7 @@ async fn e2e_joiner_connects_to_host_and_transfers_data() {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Create an invite code for the joiner
-    let invite_payload = InvitePayload {
+    let invite_payload = InvitePayload { suggested_name: None,
         onion_address: addr.clone(),
         nonce: [0x42u8; 16],
         timestamp: chrono::Utc::now().timestamp() as u64,
@@ -209,7 +209,7 @@ async fn e2e_joiner_timeout_on_bad_address() {
     let connector = ArtiConnector::new(client.clone());
 
     // Create a valid-looking invite pointing to a non-existent onion
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion".into(),
         nonce: [0x42u8; 16],
         timestamp: chrono::Utc::now().timestamp() as u64,
@@ -306,7 +306,7 @@ async fn offline_joiner_rejected_without_connect() {
     //
     // Note: A real connection test requires a bootstrapped Tor client,
     // which is covered by the e2e tests above.
-    let _invite = InvitePayload {
+    let _invite = InvitePayload { suggested_name: None,
         onion_address: "not-an-onion".to_string(),
         nonce: [0u8; 16],
         timestamp: 0,
@@ -320,7 +320,7 @@ async fn offline_joiner_rejected_without_connect() {
 fn offline_invite_roundtrip_with_port() {
     use ephemeral_chat_core::invite::{decode, encode, InvitePayload};
 
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".to_string(),
         nonce: [0xAB; 16],
         timestamp: 1_700_000_000,

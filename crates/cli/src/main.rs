@@ -245,7 +245,7 @@ impl App {
         }
 
         if let Some(cmd) = text.strip_prefix('/') {
-            self.dispatch_command(cmd);
+            self.dispatch_command(&text[1..]);
             return;
         }
 
@@ -275,10 +275,16 @@ impl App {
             }
         };
 
-        match cmd {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        let command_name = parts.first().copied().unwrap_or("");
+
+        match command_name {
             "invite" => {
+                let invite_cmd = cmd.to_string();
                 tokio::spawn(async move {
-                    let code = h.invite().await.map_err(|e| e.to_string());
+                    let parts: Vec<&str> = invite_cmd.split_whitespace().collect();
+                    let name_arg = if parts.len() > 1 { Some(parts[1]) } else { None };
+                    let code = h.invite(name_arg).await.map_err(|e| e.to_string());
                     let _ = tx.send(CmdResult::Invite { code });
                 });
             }
@@ -668,8 +674,20 @@ async fn main() -> Result<()> {
         Commands::Host { headless, .. } | Commands::Join { headless, .. } => *headless,
     };
 
-    let name = resolve_name(name_override)
-        .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?;
+    // For join, only use explicit --name flag; fall back to invite's suggested name
+    let name = match &command {
+        Commands::Join { .. } => {
+            if let Some(n) = name_override {
+                n.trim().to_string()
+            } else {
+                String::new() // Empty means "use invite's suggested name"
+            }
+        }
+        Commands::Host { .. } => {
+            resolve_name(name_override)
+                .map_err(|e| anyhow::anyhow!("Failed to resolve display name: {e}"))?
+        }
+    };
 
     if headless {
         run_headless(name, timestamps, &command).await
@@ -795,10 +813,15 @@ async fn run_headless(name: String, _timestamps: bool, command: &Commands) -> Re
 
                 if let Some(cmd) = line.strip_prefix('/') {
                     let h = handle.clone();
-                    match cmd {
+                    let parts: Vec<&str> = cmd.split_whitespace().collect();
+                    let command_name = parts.first().copied().unwrap_or("");
+                    match command_name {
                         "invite" => {
+                            let invite_cmd = cmd.to_string();
                             tokio::spawn(async move {
-                                match h.invite().await {
+                                let parts: Vec<&str> = invite_cmd.split_whitespace().collect();
+                                let name_arg = if parts.len() > 1 { Some(parts[1]) } else { None };
+                                match h.invite(name_arg).await {
                                     Ok(c) => println!("[system] invite code: {}", c),
                                     Err(e) => eprintln!("[error] invite failed: {}", e),
                                 }

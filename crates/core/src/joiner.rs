@@ -76,17 +76,24 @@ impl Joiner {
         // 1. DECODE + 2. VALIDATE (onion format, nonce, TTL=300s expiry)
         let payload = decode_invite(invite_code, Some(300))?;
 
+        // Use suggested name from invite if present and no override provided
+        let effective_name = if name.is_empty() {
+            payload.suggested_name.as_deref().unwrap_or("anonymous")
+        } else {
+            name
+        };
+
         // 3. CONNECT to onion service on port 80
         let stream = tor.connect(&payload.onion_address, 80).await?;
 
         // 4. HANDSHAKE — exchange nonce, register name
-        let (peer_id, stream) = Self::handshake(stream, name).await?;
+        let (peer_id, stream) = Self::handshake(stream, effective_name).await?;
 
         // 5. RETURN ready-to-run Joiner
         Ok(Self {
             stream: Some(stream),
             peer_id,
-            name: name.to_string(),
+            name: effective_name.to_string(),
         })
     }
 
@@ -573,6 +580,7 @@ mod tests {
             onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
             nonce: [0x42u8; 16],
             timestamp: 1_700_000_000,
+            suggested_name: None,
         };
         let code = encode(&payload).unwrap();
 
@@ -605,6 +613,7 @@ mod tests {
             onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
             nonce: [0xABu8; 16],
             timestamp: chrono::Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         let code = encode(&payload).unwrap();
 
@@ -624,6 +633,7 @@ mod tests {
             onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
             nonce: [0xABu8; 16],
             timestamp: chrono::Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         let code = encode(&payload).unwrap();
 

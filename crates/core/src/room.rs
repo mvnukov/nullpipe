@@ -96,7 +96,7 @@ impl RoomHandle {
     /// Generate a new invite code.
     ///
     /// Only available on hub rooms. Returns an error when called by a joiner.
-    pub async fn invite(&self) -> Result<String> {
+    pub async fn invite(&self, suggested_name: Option<&str>) -> Result<String> {
         if self.inner.quit_flag.load(Ordering::SeqCst) {
             return Err(ChatError::ShuttingDown);
         }
@@ -113,6 +113,7 @@ impl RoomHandle {
             onion_address: info.onion_address.clone(),
             nonce,
             timestamp: chrono::Utc::now().timestamp() as u64,
+            suggested_name: suggested_name.map(|s| s.to_string()),
         };
         encode_invite(&payload)
     }
@@ -588,8 +589,16 @@ async fn hub_handshake(
         .map_err(|_| ChatError::Connection("handshake flush timed out".into()))?
         .map_err(|e| ChatError::Connection(format!("handshake flush: {e}")))?;
 
-    let name = format!("peer-{}", hex::encode(&discriminator[..4]));
-    Ok((peer_id, name))
+    // Read the name sent by the joiner as the first wire message
+    let frame = timeout(Duration::from_secs(10), read_frame(stream))
+        .await
+        .map_err(|_| ChatError::Connection("handshake name read timed out".into()))?
+        .map_err(|e| ChatError::Connection(format!("handshake name read: {e}")))?;
+    
+    let wire_msg = crate::wire::decode_message(&frame)
+        .map_err(|e| ChatError::Connection(format!("handshake name decode: {e}")))?;
+    
+    Ok((peer_id, wire_msg.text))
 }
 
 /// Reader task for a hub-connected peer.
@@ -843,7 +852,7 @@ mod tests {
         });
         let handle = RoomHandle { inner };
 
-        let result = handle.invite().await;
+        let result = handle.invite(None).await;
         assert!(result.is_err());
     }
 

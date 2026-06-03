@@ -154,7 +154,7 @@ async fn e2e_host_generates_valid_invite_code() {
         .expect("RoomReady");
 
     // Exercises same path as /invite CLI command
-    let code = handle.invite().await.expect("invite() failed");
+    let code = handle.invite(None).await.expect("invite() failed");
     assert!(!code.is_empty());
 
     // Valid base58
@@ -179,7 +179,7 @@ async fn e2e_joiner_connects_and_peer_join_fires() {
         .await
         .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (joiner_h, mut joiner_ev) = start_joiner(code);
 
@@ -212,7 +212,7 @@ async fn e2e_messages_flow_bidirectional() {
         .await
         .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (joiner_h, mut joiner_ev) = start_joiner(code);
 
@@ -255,7 +255,7 @@ async fn e2e_peer_leave_on_joiner_quit() {
         .await
         .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (joiner_h, mut joiner_ev) = start_joiner(code);
 
@@ -291,7 +291,7 @@ async fn e2e_room_close_notifies_joiner() {
         .await
         .expect("host RoomReady");
 
-    let code = host_h.invite().await.expect("host invite");
+    let code = host_h.invite(None).await.expect("host invite");
 
     let (_joiner_h, mut joiner_ev) = start_joiner(code);
 
@@ -342,7 +342,7 @@ async fn e2e_invalid_invite_code_rejected() {
 
 #[test]
 fn e2e_expired_invite_rejected() {
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion"
             .into(),
         nonce: [0x42u8; 16],
@@ -363,12 +363,12 @@ fn e2e_double_join_nonce_reuse_detectable() {
     let ts = chrono::Utc::now().timestamp() as u64;
     let addr = "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion";
 
-    let p1 = InvitePayload {
+    let p1 = InvitePayload { suggested_name: None,
         onion_address: addr.into(),
         nonce: [0xDEu8; 16],
         timestamp: ts,
     };
-    let p2 = InvitePayload {
+    let p2 = InvitePayload { suggested_name: None,
         onion_address: addr.into(),
         nonce: [0xDEu8; 16],
         timestamp: ts,
@@ -405,7 +405,7 @@ async fn e2e_host_send_message_no_peers_room_stays_open() {
     // Verify handle is still usable:
     let peers = host_h.peers().await;
     assert!(peers.is_empty(), "should have zero peers");
-    let code = host_h.invite().await.expect("invite should still work");
+    let code = host_h.invite(None).await.expect("invite should still work");
     assert!(!code.is_empty(), "should still generate invite");
 
     host_h.quit().await;
@@ -427,7 +427,7 @@ async fn e2e_cli_commands_work_in_async_context() {
         .expect("RoomReady");
 
     // /invite path — no block_on panic
-    let code = handle.invite().await.expect("invite should work");
+    let code = handle.invite(None).await.expect("invite should work");
     assert!(!code.is_empty());
     FromBase58::from_base58(code.as_str()).expect("valid base58");
 
@@ -441,7 +441,7 @@ async fn e2e_cli_commands_work_in_async_context() {
     // Post-quit: send fails
     assert!(handle.send("test").await.is_err());
     // Post-quit: invite fails
-    assert!(handle.invite().await.is_err());
+    assert!(handle.invite(None).await.is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@ async fn e2e_independent_bootstrap_joiner_sends_message() {
                 }
             }
             
-            let code = host_h.invite().await.expect("host invite");
+            let code = host_h.invite(None).await.expect("host invite");
             let _ = host_ready_tx.send(code).await;
 
             // Wait for message from joiner

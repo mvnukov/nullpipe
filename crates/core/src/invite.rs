@@ -13,6 +13,8 @@ pub struct InvitePayload {
     pub nonce: [u8; 16],
     /// Issue time as Unix timestamp seconds.
     pub timestamp: u64,
+    /// Suggested display name for the joiner.
+    pub suggested_name: Option<String>,
 }
 
 /// Encode an `InvitePayload` into a single base58 token.
@@ -22,9 +24,10 @@ pub struct InvitePayload {
 pub fn encode(payload: &InvitePayload) -> Result<String> {
     validate_address(&payload.onion_address)?;
     let nonce_hex = hex::encode(payload.nonce);
+    let name_part = payload.suggested_name.as_deref().unwrap_or("");
     let joined = format!(
-        "{}:{}:{}",
-        payload.onion_address, nonce_hex, payload.timestamp
+        "{}:{}:{}:{}",
+        payload.onion_address, nonce_hex, payload.timestamp, name_part
     );
     Ok(joined.as_bytes().to_base58())
 }
@@ -46,10 +49,10 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
     let decoded =
         String::from_utf8(bytes).map_err(|_| ChatError::InvalidInvite("not valid UTF-8".into()))?;
 
-    let parts: Vec<&str> = decoded.splitn(3, ':').collect();
-    if parts.len() != 3 {
+    let parts: Vec<&str> = decoded.splitn(4, ':').collect();
+    if parts.len() < 3 || parts.len() > 4 {
         return Err(ChatError::InvalidInvite(
-            "expected three colon-separated fields".into(),
+            "expected three or four colon-separated fields".into(),
         ));
     }
 
@@ -71,6 +74,12 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
         .parse()
         .map_err(|_| ChatError::InvalidInvite("timestamp is not a valid u64".into()))?;
 
+    let suggested_name = if parts.len() == 4 && !parts[3].is_empty() {
+        Some(parts[3].to_string())
+    } else {
+        None
+    };
+
     // Clock skew tolerance: 300 s into the future.
     let now = Utc::now().timestamp() as u64;
     if timestamp > now + 300 {
@@ -90,6 +99,7 @@ pub fn decode(token: &str, ttl_secs: Option<u64>) -> Result<InvitePayload> {
         onion_address,
         nonce,
         timestamp,
+        suggested_name,
     })
 }
 
@@ -117,6 +127,7 @@ mod tests {
             onion_address: addr.to_string(),
             nonce: [0x42u8; 16],
             timestamp: ts,
+            suggested_name: None,
         }
     }
 
@@ -142,6 +153,7 @@ mod tests {
             onion_address: ONION.into(),
             nonce: [0u8; 16],
             timestamp: Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         let token = encode(&payload).unwrap();
         let decoded = decode(&token, None).unwrap();
@@ -154,6 +166,7 @@ mod tests {
             onion_address: ONION.into(),
             nonce: [0xFFu8; 16],
             timestamp: Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         let token = encode(&payload).unwrap();
         let decoded = decode(&token, None).unwrap();
@@ -228,6 +241,7 @@ mod tests {
             onion_address: "example.com".into(),
             nonce: [0u8; 16],
             timestamp: Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         assert!(matches!(encode(&payload), Err(ChatError::InvalidInvite(_))));
     }
@@ -238,6 +252,7 @@ mod tests {
             onion_address: "x.onion".into(),
             nonce: [0u8; 16],
             timestamp: Utc::now().timestamp() as u64,
+            suggested_name: None,
         };
         assert!(matches!(encode(&payload), Err(ChatError::InvalidInvite(_))));
     }

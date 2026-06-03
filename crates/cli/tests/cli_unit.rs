@@ -89,7 +89,7 @@ async fn dispatch_command_no_panic_in_runtime() {
     let (tx, mut rx) = mpsc::unbounded_channel::<TestCmdResult>();
 
     // Simulate the exact pattern from dispatch_command for /invite
-    // This mirrors: tokio::spawn(async move { let code = h.invite().await; ... })
+    // This mirrors: tokio::spawn(async move { let code = h.invite(None).await; ... })
     let tx_clone = tx.clone();
     let join_handle = tokio::spawn(async move {
         // Simulate async invite call
@@ -326,7 +326,7 @@ async fn room_handle_methods_without_tor() {
 
     // After quit, invite should fail
     assert!(
-        handle.invite().await.is_err(),
+        handle.invite(None).await.is_err(),
         "invite after quit should fail"
     );
 

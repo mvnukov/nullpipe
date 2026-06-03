@@ -38,7 +38,7 @@ async fn connect_rejects_truncated_invite() {
 
 #[tokio::test]
 async fn connect_rejects_expired_invite() {
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
         nonce: [0x42u8; 16],
         timestamp: 1_700_000_000,
@@ -67,7 +67,7 @@ async fn connect_rejects_invite_with_bad_onion_address() {
 
 #[tokio::test]
 async fn connect_calls_tor_with_correct_target() {
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
         nonce: [0xABu8; 16],
         timestamp: chrono::Utc::now().timestamp() as u64,
@@ -84,7 +84,7 @@ async fn connect_calls_tor_with_correct_target() {
 
 #[tokio::test]
 async fn connect_propagates_tor_error() {
-    let payload = InvitePayload {
+    let payload = InvitePayload { suggested_name: None,
         onion_address: "vww6ybal6bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion".into(),
         nonce: [0xABu8; 16],
         timestamp: chrono::Utc::now().timestamp() as u64,
