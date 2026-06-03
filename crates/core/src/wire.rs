@@ -177,11 +177,6 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>>
     Ok(out)
 }
 
-/// Read and decode a complete `WireMessage` from an async reader.
-pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMessage> {
-    let frame = read_frame(reader).await?;
-    decode_message(&frame)
-}
 
 /// Write a single encoded frame to an async writer with timeout protection.
 ///
