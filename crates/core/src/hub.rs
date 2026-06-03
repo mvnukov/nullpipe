@@ -6,7 +6,7 @@
 //!   Per-connection lifecycle:
 //!     1. handshake(stream, nonces) → (PeerId, name)
 //!     2. register_peer(peers, peer_id, name, broadcast_tx) → (tx, rx)
-//!     3. run_peer_io(stream, peer_id, name, peers, msg_tx, broadcast_tx, tx, rx)
+//!     3. run_peer_io(stream, ctx, tx, rx)
 //!     4. deregister_peer(peers, peer_id, name, msg_tx, broadcast_tx)
 
 use arti_client::{config::onion_service::OnionServiceConfigBuilder, DataStream, TorClient};
@@ -203,12 +203,36 @@ impl PeerRegistry {
         self.inner.read().await.len()
     }
 
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
+
     pub async fn broadcast_to_all(&self, frame: &[u8]) {
         for entry in self.inner.read().await.values() {
             let _ = entry.tx.send(frame.to_vec());
         }
     }
+
+
 }
+
+
+impl Default for PeerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Context for a peer I/O session, bundling state that stays constant
+/// for the duration of the connection.
+struct PeerIoContext {
+    peer_id: PeerId,
+    name: String,
+    peers: Arc<PeerRegistry>,
+    msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
+    broadcast_tx: broadcast::Sender<ChatEvent>,
+}
+
 
 // ---------------------------------------------------------------------------
 // Hub — connection lifecycle orchestrator
@@ -354,7 +378,18 @@ impl Hub {
         let (tx, rx) = Self::register_peer(&peers, &peer_id, &name, &broadcast_tx).await;
 
         // Phase 3
-        Self::run_peer_io(stream, &peer_id, &name, &peers, msg_tx.clone(), broadcast_tx.clone(), tx, rx).await;
+        Self::run_peer_io(
+            stream,
+            PeerIoContext {
+                peer_id: peer_id.clone(),
+                name: name.clone(),
+                peers: Arc::clone(&peers),
+                msg_tx: msg_tx.clone(),
+                broadcast_tx: broadcast_tx.clone(),
+            },
+            tx,
+            rx,
+        ).await;
 
         // Phase 4
         Self::deregister_peer(&peers, &peer_id, &name, &msg_tx, &broadcast_tx).await;
@@ -381,24 +416,21 @@ impl Hub {
         (tx, rx)
     }
 
+
     /// Phase 3: split stream, spawn reader, run writer.
     async fn run_peer_io(
         stream: DataStream,
-        peer_id: &PeerId,
-        name: &str,
-        peers: &Arc<PeerRegistry>,
-        msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
-        broadcast_tx: broadcast::Sender<ChatEvent>,
+        ctx: PeerIoContext,
         tx: PeerTx,
         rx: mpsc::UnboundedReceiver<Vec<u8>>,
     ) {
         let (reader_half, writer_half) = tokio::io::split(stream);
 
-        let r_peer = peer_id.clone();
-        let r_name = name.to_string();
-        let r_peers = Arc::clone(peers);
-        let r_msg = msg_tx.clone();
-        let r_broadcast = broadcast_tx.clone();
+        let r_peer = ctx.peer_id;
+        let r_name = ctx.name;
+        let r_peers = ctx.peers;
+        let r_msg = ctx.msg_tx.clone();
+        let r_broadcast = ctx.broadcast_tx.clone();
         let r_tx = tx.clone();
         tokio::spawn(async move {
             Self::reader_task(
@@ -413,7 +445,7 @@ impl Hub {
             .await;
         });
 
-        Self::writer_task(rx, broadcast_tx.subscribe(), writer_half).await;
+        Self::writer_task(rx, ctx.broadcast_tx.subscribe(), writer_half).await;
     }
 
     /// Phase 4: deregister peer, broadcast leave.

@@ -308,7 +308,6 @@ async fn run_host_loop(
     let accept_broadcast = wire_broadcast_tx.clone();
     let accept_msg_tx = msg_tx.clone();
     let accept_nonces = Arc::clone(&used_nonces);
-    let sender_name = config.name.clone();
 
     let accept_handle = tokio::spawn(async move {
         accept_loop(
@@ -319,7 +318,6 @@ async fn run_host_loop(
             accept_broadcast,
             accept_msg_tx,
             accept_nonces,
-            sender_name,
         )
         .await;
     });
@@ -378,7 +376,6 @@ async fn run_host_loop(
 
 
 /// Accept loop: accepts peer streams and spawns per-connection handlers.
-#[allow(clippy::too_many_arguments)]
 async fn accept_loop(
     mut room: HostedRoom,
     mut shutdown_rx: watch::Receiver<()>,
@@ -387,7 +384,6 @@ async fn accept_loop(
     wire_broadcast: broadcast::Sender<WireMessage>,
     msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
     used_nonces: Arc<Mutex<std::collections::HashSet<[u8; 16]>>>,
-    _sender_name: String,
 ) {
     info!("host: accept loop started");
 
@@ -408,17 +404,20 @@ async fn accept_loop(
 
                 let wire_broadcast = wire_broadcast.clone();
                 let msg_tx = msg_tx.clone();
-                let nonces = Arc::clone(&used_nonces);
                 let peers = Arc::clone(&peers);
                 let event_tx = event_tx.clone();
-                let sender_name = _sender_name.clone();
 
                 tokio::spawn({
-                    let conn_shutdown = shutdown_rx.clone();
+                    let ctx = HubPeerCtx {
+                        nonces: Arc::clone(&used_nonces),
+                        msg_tx: msg_tx.clone(),
+                        wire_broadcast: wire_broadcast.clone(),
+                        peers: Arc::clone(&peers),
+                        event_tx: event_tx.clone(),
+                        shutdown_rx: shutdown_rx.clone(),
+                    };
                     async move {
-                        if let Err(e) = handle_hub_connection(
-                            stream, nonces, msg_tx, wire_broadcast, peers, event_tx, sender_name, conn_shutdown,
-                        ).await {
+                        if let Err(e) = handle_hub_connection(stream, ctx).await {
                             warn!("host: connection handler error: {e}");
                         }
                     }
@@ -431,21 +430,28 @@ async fn accept_loop(
     info!("host: accept loop ended");
 }
 
-/// Full lifecycle for one accepted peer stream on the hub side.
-async fn handle_hub_connection(
-    stream: DataStream,
+/// Context for an accepted hub-side peer connection, bundling the shared
+/// state that a per-connection handler needs.
+struct HubPeerCtx {
     nonces: Arc<Mutex<std::collections::HashSet<[u8; 16]>>>,
     msg_tx: mpsc::Sender<(PeerId, WireMessage)>,
     wire_broadcast: broadcast::Sender<WireMessage>,
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
     event_tx: mpsc::Sender<ChatEvent>,
-    _sender_name: String,
-    mut shutdown_rx: watch::Receiver<()>,
+    shutdown_rx: watch::Receiver<()>,
+}
+
+
+/// Full lifecycle for one accepted peer stream on the hub side.
+async fn handle_hub_connection(
+    stream: DataStream,
+    ctx: HubPeerCtx,
 ) -> Result<()> {
+    let mut ctx = ctx;
     let mut stream = stream;
 
     // 1. Handshake
-    let (peer_id, name) = hub_handshake(&mut stream, nonces).await?;
+    let (peer_id, name) = hub_handshake(&mut stream, ctx.nonces).await?;
     let joined_at = std::time::Instant::now();
     info!("host: peer {peer_id} ({name}) admitted");
 
@@ -456,12 +462,12 @@ async fn handle_hub_connection(
         joined_at,
     };
     {
-        let mut map = peers.write().await;
+        let mut map = ctx.peers.write().await;
         map.insert(peer_id.clone(), peer_info.clone());
     }
 
     // 3. Emit PeerJoin event
-    let _ = event_tx.try_send(ChatEvent::PeerJoin(peer_info.clone()));
+    let _ = ctx.event_tx.try_send(ChatEvent::PeerJoin(peer_info.clone()));
 
     // 4. Notify peer about join
     if let Ok(frame) = encode_message(&WireMessage::system(&format!("{name} joined"))) {
@@ -474,10 +480,10 @@ async fn handle_hub_connection(
     // 6. Spawn reader
     let r_peer = peer_id.clone();
     let r_name = name.clone();
-    let r_peers = Arc::clone(&peers);
-    let r_msg = msg_tx.clone();
-    let r_broadcast = wire_broadcast.clone();
-    let r_writer = msg_tx.clone(); // for pong responses via msg_tx
+    let r_peers = Arc::clone(&ctx.peers);
+    let r_msg = ctx.msg_tx.clone();
+    let r_broadcast = ctx.wire_broadcast.clone();
+    let r_writer = ctx.msg_tx.clone(); // for pong responses via msg_tx
 
     let mut reader_handle = tokio::spawn(async move {
         hub_reader_task(
@@ -493,7 +499,7 @@ async fn handle_hub_connection(
     });
 
     // 7. Writer: forward broadcast wire messages to this peer
-    let mut broadcast_rx = wire_broadcast.subscribe();
+    let mut broadcast_rx = ctx.wire_broadcast.subscribe();
     let writer_done = tokio::spawn(async move {
         loop {
             match broadcast_rx.recv().await {
@@ -528,7 +534,7 @@ async fn handle_hub_connection(
         _ = &mut reader_handle => {
             // reader finished normally
         }
-        _ = shutdown_rx.changed() => {
+        _ = ctx.shutdown_rx.changed() => {
             info!("host: shutting down, aborting peer connection");
             reader_handle.abort();
         }
@@ -537,13 +543,13 @@ async fn handle_hub_connection(
 
     // 9. Deregister peer
     {
-        let mut map = peers.write().await;
+        let mut map = ctx.peers.write().await;
         map.remove(&peer_id);
     }
     info!("host: peer {peer_id} ({name}) disconnected");
 
     // 10. Emit PeerLeave
-    let _ = event_tx.try_send(ChatEvent::PeerLeave(peer_id));
+    let _ = ctx.event_tx.try_send(ChatEvent::PeerLeave(peer_id));
 
     Ok(())
 }
